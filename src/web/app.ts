@@ -831,7 +831,8 @@ function refundNote(refundId: string, link: RefundLink): HTMLElement {
   const actions: HTMLElement[] = [linkButton(link.status === "linked" ? "Trocar" : "Vincular", () => void openRefundLinkDialog(refundId))];
   if (link.status === "linked") actions.push(linkButton("Desvincular", () => void setRefundLink(refundId, null)));
   if (link.kind === "manual" || link.unlinked) actions.push(linkButton("Voltar ao automático", () => void setRefundLink(refundId, undefined)));
-  return h("span", { className: `subtext${link.status === "pending" ? " is-negative" : ""}` }, document.createTextNode(`${text} `), ...actions);
+  const label = h("span", { className: `subtext${link.status === "pending" ? " is-negative" : ""}`, text });
+  return h("span", { className: "row refund-note" }, label, ...actions);
 }
 
 function renderCard(data: CardResponse): void {

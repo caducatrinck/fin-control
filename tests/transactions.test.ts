@@ -378,7 +378,7 @@ describe("matchRefunds", () => {
   });
 
   it("assinatura mensal de mesmo valor: o estorno um dia depois fica com a compra mais próxima", () => {
-    const wellhub = (id: string, date: string) => purchase(id, 199.9, "Wellhub Cadu Catrinck", date, { category: "Gyms and fitness centers" });
+    const wellhub = (id: string, date: string) => purchase(id, 199.9, "Wellhub Fulano de Tal", date, { category: "Gyms and fitness centers" });
     const list = [wellhub("w-ago", "2026-08-29"), wellhub("w-set", "2026-09-29"), wellhub("w-out", "2026-10-29"), refundTx("r", 199.9, "Estorno de compra", "2026-10-30")];
     const match = matchRefunds(list).get("r");
     assert.equal(match?.purchase?.id, "w-out");
@@ -545,7 +545,7 @@ describe("estorno x parcelas", () => {
     const list = [...plan(), refundTx("r", 46, 'Crédito de "SHOPEE *SHPSTECNOLOGIA"', "2026-09-20")];
     const matches = matchRefunds(list);
     assert.equal(matches.get("r")?.kind, "partial");
-    assert.equal(cancelledInstallmentIds(list, matches).size, 0);
+    assert.equal(cancelledInstallmentIds(list, matches, new Date(2026, 8, 25)).size, 0);
     const enriched = enrichTransaction(list[3]!, emptyCtx({ refundMatches: matches }));
     assert.equal(enriched.refundLink?.partial, true);
     assert.equal(enriched.refundLink?.status, "linked");
@@ -572,14 +572,29 @@ describe("estorno x parcelas", () => {
   it("estorno igual a uma parcela é parcial: não cancela com pareamento (sem pareamento vale a heurística antiga)", () => {
     const list = [...plan(), refundTx("r", 50.73, "Estorno de compra", "2026-09-20")];
     const matches = matchRefunds(list);
-    assert.equal(cancelledInstallmentIds(list, matches).size, 0);
+    const early = new Date(2026, 8, 25);
+    assert.equal(cancelledInstallmentIds(list, matches, early).size, 0);
     assert.deepEqual([...cancelledInstallmentIds(list)].sort(), ["s2", "s3"]);
+  });
+
+  it("estorno do valor de uma parcela: plano encalhado (parcelas nunca faturadas) é cancelado; plano recente não", () => {
+    const list = [...plan(), refundTx("r", 50.73, "Estorno de compra", "2026-09-20")];
+    const matches = matchRefunds(list);
+    // Em 25/09 as parcelas seguintes ainda nem venceram: só abate.
+    assert.equal(cancelledInstallmentIds(list, matches, new Date(2026, 8, 25)).size, 0);
+    // Em 11/11 a fatura prevista de s2 (out) já fechou e ela segue PENDING sem billId: o banco cancelou o plano.
+    assert.deepEqual([...cancelledInstallmentIds(list, matches, new Date(2026, 10, 11))].sort(), ["s2", "s3"]);
+    // Parcela que virou fatura (billId) prova que o plano segue vivo.
+    const billed = list.map((t) =>
+      t.id === "s2" ? { ...t, creditCardMetadata: { ...t.creditCardMetadata, billId: "b1" } } : t,
+    );
+    assert.equal(cancelledInstallmentIds(billed, matchRefunds(billed), new Date(2026, 10, 11)).size, 0);
   });
 
   it("estorno desvinculado à mão não cancela parcelas", () => {
     const list = [...plan(), refundTx("r", 50.73, "Estorno de compra", "2026-09-20")];
     const matches = matchRefunds(list, { windowDays: 60, manual: new Map([["r", null]]) });
-    assert.equal(cancelledInstallmentIds(list, matches).size, 0);
+    assert.equal(cancelledInstallmentIds(list, matches, new Date(2026, 10, 11)).size, 0);
   });
 });
 

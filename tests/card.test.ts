@@ -193,8 +193,12 @@ function cardTx(
 }
 
 /** Equivalente ao que o servidor faz: PeriodTransaction com valor positivo e sentido. */
-function period(t: Transaction): PeriodTransaction {
+function period(t: Transaction, refundLinks: Record<string, string> = {}): PeriodTransaction {
+  const origin = refundLinks[t.id];
   return periodTx({
+    ...(origin && {
+      refundLink: { status: "linked", kind: "exact", purchaseId: origin, purchaseDate: null, purchaseName: null, partial: false, unlinked: false },
+    }),
     id: t.id,
     accountId: t.accountId,
     accountName: "ultraviolet-black",
@@ -211,12 +215,12 @@ function period(t: Transaction): PeriodTransaction {
 
 function build(
   raw: Transaction[],
-  opts: { bills?: Bill[]; settings?: CardSettings; overrides?: BillOverride[] } = {},
+  opts: { bills?: Bill[]; settings?: CardSettings; overrides?: BillOverride[]; refundLinks?: Record<string, string> } = {},
 ): ReturnType<typeof buildCard> {
   return buildCard({
     accounts: [ultraviolet()],
     raw,
-    transactions: raw.map(period),
+    transactions: raw.map((t) => period(t, opts.refundLinks)),
     bills: new Map([["acc-card", opts.bills ?? [NOV_BILL]]]),
     billsAvailable: true,
     range: { from: "2026-12-01", to: "2026-12-31" },
@@ -336,6 +340,29 @@ describe("projeção de parcelas ausentes", () => {
   it("não projeta faturas já fechadas", () => {
     const result = build(base, { settings: { projectInstallments: true, refundWindowDays: 60 } });
     assert.deepEqual(result.bills.find((b) => b.month === "2026-11")?.projected, []);
+  });
+});
+
+describe("estorno de compra em fatura fechada", () => {
+  const dec = { billForecastDate: "2026-12" };
+  const wellhub = cardTx("wh", "DEBIT", 199.9, "2026-10-29", "Wellhub", { billId: "bill-nov" });
+  const estorno = cardTx("est", "CREDIT", 199.9, "2026-10-30", "Estorno de compra", dec);
+  const outra = cardTx("n1", "DEBIT", 1000, "2026-11-03", "Compra novembro", dec);
+
+  it("pareado a compra de fatura fechada, abate aquela fatura e não entra na próxima", () => {
+    const result = build([wellhub, estorno, outra], { refundLinks: { est: "wh" } });
+    assert.equal(result.next?.total, 1000);
+    assert.equal(result.next?.forecastCount, 1);
+    assert.equal(result.bills.find((b) => b.month === "2026-11")?.forecastCount, 0);
+    const nov = result.bills.find((b) => b.month === "2026-11");
+    // Compra de 199,90 − estorno de 199,90 na fatura de novembro.
+    assert.equal(nov?.total, 0);
+  });
+
+  it("sem pareamento (ou compra ainda em fatura aberta), continua na próxima fatura", () => {
+    assert.equal(build([wellhub, estorno, outra]).next?.total, 800.1);
+    const aberta = cardTx("wh", "DEBIT", 199.9, "2026-11-04", "Wellhub", dec);
+    assert.equal(build([aberta, estorno, outra], { refundLinks: { est: "wh" } }).next?.total, 1000);
   });
 });
 

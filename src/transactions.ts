@@ -208,6 +208,16 @@ function plansOf(transactions: readonly Transaction[]): Map<string, Transaction[
   return byPlan;
 }
 
+/** Parcelas posteriores ao estorno que nunca viraram fatura, com a fatura prevista de alguma já encerrada. */
+function isStranded(later: readonly Transaction[], currentMonth: string, todayIso: string): boolean {
+  const due = later.filter((t) => t.date.slice(0, 10) <= todayIso);
+  if (due.length === 0 || due.some((t) => t.creditCardMetadata?.billId)) return false;
+  return due.some((t) => {
+    const forecast = t.creditCardMetadata?.billForecastDate;
+    return forecast !== undefined && forecast !== null && forecast.slice(0, 7) < currentMonth;
+  });
+}
+
 /**
  * Parcelas após um estorno que bate com a 1ª parcela do plano.
  * Nubank cancela o resto no app, mas a Pluggy segue mandando débitos PENDING.
@@ -216,12 +226,18 @@ function plansOf(transactions: readonly Transaction[]): Map<string, Transaction[
  * Com `matches` (pareamento por conta/valor/loja/janela + decisões manuais):
  * - estorno vinculado a um plano cancela o resto só quando cobre o total do plano (somando estornos
  *   parciais); estorno parcial, inclusive de valor igual a uma parcela, só abate e não cancela nada;
- * - estorno pendente ou desvinculado à mão nunca cancela.
+ * - estorno pendente ou desvinculado à mão nunca cancela;
+ * - exceção: estorno parcial também cancela o resto quando o plano está "encalhado", isto é, as parcelas
+ *   posteriores nunca viraram fatura (sem `billId`) mesmo com a fatura prevista pela Pluggy já fechada.
+ *   Parcela cobrada de verdade ganha `billId`; a que fica PENDING para sempre é o plano cancelado no banco.
  */
 export function cancelledInstallmentIds(
   transactions: readonly Transaction[],
   matches?: ReadonlyMap<string, RefundMatch>,
+  today: Date = new Date(),
 ): Set<string> {
+  const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  const todayIso = `${currentMonth}-${String(today.getDate()).padStart(2, "0")}`;
   const byPlan = plansOf(transactions);
   const cancelled = new Set<string>();
 
@@ -245,8 +261,9 @@ export function cancelledInstallmentIds(
       )[0];
       const total = first ? Math.abs(first.amount) * (first.creditCardMetadata?.totalInstallments ?? members.length) : 0;
       const covers = acc.full || acc.sum >= total - 0.02 * Math.max(1, members.length);
-      if (!covers) continue;
-      for (const t of members) if (t.date.slice(0, 10) > acc.lastDay) cancelled.add(t.id);
+      const later = members.filter((t) => t.date.slice(0, 10) > acc.lastDay);
+      if (!covers && !isStranded(later, currentMonth, todayIso)) continue;
+      for (const t of later) cancelled.add(t.id);
     }
   }
 

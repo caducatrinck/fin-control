@@ -132,6 +132,11 @@ export function reconcileBill(bill: Bill, raw: readonly Transaction[]): BillReco
   return { transactionsTotal, totalAmount: round(bill.totalAmount), difference, financeCharges, payments, explainedBy, explained };
 }
 
+/** Fatura fechada: fechamento real já passou (sem ele, vencimento já passou). */
+function isBillClosed(bill: Bill, todayIso: string): boolean {
+  return (bill.billClosingDate ?? bill.dueDate).slice(0, 10) <= todayIso;
+}
+
 /** Salário do período: entradas que parecem salário; senão a maior entrada. */
 export function detectSalary(transactions: readonly PeriodTransaction[], range: DateRange): Pick<CardBudget, "salary" | "salarySource"> {
   const inRange = transactions.filter(
@@ -187,6 +192,7 @@ export function buildCard(input: CardInput): CardResponse {
   const billById = new Map<string, Bill>();
   for (const list of bills.values()) for (const bill of list) billById.set(bill.id, bill);
   const rawById = new Map(raw.map((t) => [t.id, t]));
+  const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
 
   const purchases = transactions
     // Compra (saída) ou reembolso; parcela cancelada / crédito marcado como entrada ficam fora.
@@ -199,9 +205,20 @@ export function buildCard(input: CardInput): CardResponse {
       const total = meta?.totalInstallments ?? 0;
       const forecast = meta?.billForecastDate && FORECAST_MONTH.test(meta.billForecastDate) ? meta.billForecastDate : null;
       // Fatura da Pluggy > mês previsto pela própria Pluggy (billForecastDate) > estimativa pelo ciclo do cartão.
-      const dueMonth = bill
+      let dueMonth = bill
         ? bill.dueDate.slice(0, 7)
         : (forecast ?? estimateDueMonth(source ? installmentDate(source) : t.date, cycle));
+      let forecasted = !bill && forecast !== null;
+      // Estorno sem fatura própria pareado a uma compra de fatura já FECHADA: o banco abate aquela fatura
+      // (o pagamento sai líquido do estorno), então ele não pode pesar de novo na próxima.
+      if (t.refund && !bill && t.refundLink?.status === "linked" && t.refundLink.purchaseId) {
+        const originBillId = rawById.get(t.refundLink.purchaseId)?.creditCardMetadata?.billId;
+        const originBill = originBillId ? billById.get(originBillId) : undefined;
+        if (originBill && isBillClosed(originBill, todayIso) && originBill.dueDate.slice(0, 7) < dueMonth) {
+          dueMonth = originBill.dueDate.slice(0, 7);
+          forecasted = false;
+        }
+      }
       const purchase: CardPurchase = {
         id: t.id,
         date: t.date,
@@ -214,7 +231,7 @@ export function buildCard(input: CardInput): CardResponse {
         installment: total > 1 ? `${meta?.installmentNumber ?? 1}/${total}` : null,
         refundLink: t.refundLink,
       };
-      return { purchase, dueMonth, accountId: t.accountId, forecasted: !bill && forecast !== null, source };
+      return { purchase, dueMonth, accountId: t.accountId, forecasted, source };
     });
 
   const estimatedByMonth = new Map<string, number>();
@@ -347,7 +364,6 @@ export function buildCard(input: CardInput): CardResponse {
     };
   };
 
-  const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
   const current = todayIso.slice(0, 7);
   const openMonths = credit.map((a) => estimateDueMonth(todayIso, cycles.get(a.id) ?? { closeDay: null, dueDay: null }));
   const nextMonth = openMonths.sort()[0] ?? addMonths(current, 1);
