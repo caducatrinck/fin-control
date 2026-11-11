@@ -75,7 +75,12 @@ jobs:
           path: dist
       - name: Publicar release v${{ env.VERSION }}
         run: |
+          # Cópia com nome fixo: o link de download do README sempre aponta para a última versão.
+          cp dist/*.exe dist/Fin-Control-portable.exe
           if gh release view "v$VERSION" >/dev/null 2>&1; then
+            if ! gh release view "v$VERSION" --json assets -q '.assets[].name' | grep -qx Fin-Control-portable.exe; then
+              gh release upload "v$VERSION" dist/Fin-Control-portable.exe
+            fi
             echo "Release v$VERSION já existe — suba a versão no package.json para publicar outra."
             exit 0
           fi

@@ -1,3 +1,5 @@
+**[⬇️ Baixar o Fin Control para Windows (.exe)](https://github.com/caducatrinck/fin-control/releases/latest/download/Fin-Control-portable.exe)** · [todas as versões](https://github.com/caducatrinck/fin-control/releases)
+
 # Fin Control
 
 Controle financeiro pessoal que lê seus bancos via **Open Finance**, usando a [Pluggy](https://pluggy.ai) e o [MeuPluggy](https://meu.pluggy.ai).
@@ -11,7 +13,7 @@ Ele mostra saldos, transações, cartão, contas recorrentes e investimentos, co
 
 ## 1. Baixar e abrir (Windows)
 
-1. Abra a página **Releases** deste repositório e baixe o `Fin-Control-<versão>-portable.exe` mais recente.
+1. Clique em **Baixar o Fin Control para Windows** no topo desta página. Esse link sempre baixa a versão mais recente. As versões anteriores ficam em **Releases**.
 2. Dê dois cliques no `.exe`. Não precisa instalar.
 3. O executável não tem assinatura digital, então o Windows pode mostrar **"O Windows protegeu o computador"**. Clique em **Mais informações → Executar assim mesmo**.
 
