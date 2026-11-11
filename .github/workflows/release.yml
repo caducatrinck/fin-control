@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+# Push novo cancela a execução anterior: evita duas pipelines publicando a mesma release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -53,7 +58,7 @@ jobs:
           if [ $code -ne 0 ]; then echo "::error title=smoke test::exit $code: $(echo "$out" | tr '\r\n' '  ' | cut -c1-3000)"; fi
           exit $code
       - run: npx electron-builder --win portable --publish never
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: fin-control-${{ steps.version.outputs.version }}-win-x64
           path: release/*.exe
@@ -69,7 +74,7 @@ jobs:
       VERSION: ${{ needs.build-windows.outputs.version }}
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: fin-control-${{ needs.build-windows.outputs.version }}-win-x64
           path: dist
