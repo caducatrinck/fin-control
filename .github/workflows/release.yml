@@ -41,9 +41,15 @@ jobs:
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
       - run: npm ci
       - name: Smoke test (servidor no Node do Electron)
+        shell: bash
         env:
           ELECTRON_RUN_AS_NODE: "1"
-        run: node_modules\electron\dist\electron.exe scripts\smoke.ts
+        run: |
+          set +e
+          out=$(node_modules/electron/dist/electron.exe scripts/smoke.ts 2>&1); code=$?
+          echo "$out"
+          if [ $code -ne 0 ]; then echo "::error title=smoke test::exit $code: $(echo "$out" | tr '\r\n' '  ' | cut -c1-3000)"; fi
+          exit $code
       - run: npx electron-builder --win portable --publish never
       - uses: actions/upload-artifact@v4
         with:
