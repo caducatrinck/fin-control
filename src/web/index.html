@@ -1,0 +1,694 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fin-control</title>
+  <script src="/theme.js"></script>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="https://cdn.pluggy.ai/pluggy-connect/v2.11.0/pluggy-connect.js"></script>
+  <script src="/app.js" type="module"></script>
+</head>
+<body>
+  <main class="container container-wide">
+    <header class="app-header">
+      <div class="brand">
+        <h1>fin-control</h1>
+        <span class="eyebrow" id="subtitle">Carregando...</span>
+      </div>
+      <div class="row">
+        <button class="btn btn-ghost" id="settings-btn" hidden>Configurações</button>
+        <button class="btn btn-secondary theme-toggle" data-theme-toggle></button>
+      </div>
+    </header>
+
+    <!-- Configuração inicial -->
+
+    <section id="step-credentials" class="card" hidden>
+      <h2>Credenciais da Pluggy</h2>
+      <ol class="steps">
+        <li>
+          <div class="stack">
+            <span>Entre na Pluggy. O Dashboard abre em outra aba e esta página continua aqui.</span>
+            <div><a class="btn btn-secondary" href="https://dashboard.pluggy.ai" target="_blank" rel="noopener">Entrar na Pluggy ↗</a></div>
+          </div>
+        </li>
+        <li><span>No Dashboard, abra <strong>Applications</strong>, escolha sua aplicação (ou crie uma) e copie o Client ID e o Client Secret.</span></li>
+        <li><span>Volte para esta aba, cole os valores abaixo e clique em <strong>Validar e salvar</strong>. O app grava tudo sozinho.</span></li>
+      </ol>
+      <form id="credentials-form" class="stack">
+        <div class="field">
+          <label class="label" for="clientId">Client ID</label>
+          <input class="input" type="text" id="clientId" autocomplete="off" data-lpignore="true" data-1p-ignore
+                 placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required>
+        </div>
+        <div class="field">
+          <label class="label" for="clientSecret">Client Secret</label>
+          <input class="input" type="password" id="clientSecret" autocomplete="new-password" data-lpignore="true" data-1p-ignore required>
+        </div>
+        <div class="alert alert-error" id="credentials-error"></div>
+        <div class="row">
+          <button class="btn btn-primary" type="submit">Validar e salvar</button>
+          <button class="btn btn-secondary" type="button" id="cancel-credentials-btn" hidden>Cancelar</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="step-connect" class="card" hidden>
+      <h2>Conectar conta bancária</h2>
+      <p class="muted">
+        Autorize o fin-control a ler os saldos e as transações dos seus bancos. O acesso é somente leitura:
+        o app não faz pagamentos nem transferências. Isso é feito uma única vez.
+      </p>
+      <ol class="steps">
+        <li>
+          <div class="stack">
+            <span>
+              Crie sua conta no MeuPluggy e conecte seus bancos por lá, pelo Open Finance.
+              A autorização é feita no app do seu banco.
+            </span>
+            <div class="row">
+              <a class="btn btn-secondary" href="https://meu.pluggy.ai" target="_blank" rel="noopener">Abrir MeuPluggy ↗</a>
+              <button class="btn btn-primary" id="banks-ready-btn">Já conectei meus bancos</button>
+            </div>
+          </div>
+        </li>
+        <li id="connect-step" hidden>
+          <div class="stack">
+            <span>Autorize o fin-control a ler seus bancos pelo MeuPluggy: faça login e confirme. Suas contas aparecem aqui em seguida.</span>
+            <div class="alert alert-error" id="connect-error"></div>
+            <div><button class="btn btn-primary" id="connect-btn">Conectar conta bancária</button></div>
+          </div>
+        </li>
+      </ol>
+    </section>
+
+    <section id="step-settings" class="card" hidden>
+      <h2>Configurações</h2>
+      <dl class="definition">
+        <dt>Aplicação Pluggy</dt><dd class="mono" id="settings-client"></dd>
+        <dt>Conta bancária</dt><dd class="mono" id="settings-item"></dd>
+      </dl>
+      <div class="alert alert-error" id="settings-error"></div>
+      <div class="row">
+        <button class="btn btn-primary" id="change-credentials-btn">Trocar credenciais</button>
+        <button class="btn btn-secondary" id="reconnect-btn">Trocar conta bancária</button>
+        <button class="btn btn-secondary" id="disconnect-btn">Desconectar conta bancária</button>
+        <button class="btn btn-danger" id="reset-btn">Remover tudo</button>
+        <button class="btn btn-ghost" id="close-settings-btn">Voltar</button>
+      </div>
+    </section>
+
+    <!-- App -->
+
+    <section id="step-app" class="stack" hidden>
+      <div class="card stack">
+        <div class="row-between">
+          <div class="chips" id="month-chips" role="tablist" aria-label="Período"></div>
+          <button class="btn btn-secondary push-end" id="refresh-btn" title="Sincronizar com o banco via Pluggy">Atualizar</button>
+        </div>
+        <form class="row" id="custom-range" hidden>
+          <div class="field">
+            <label class="label" for="range-from">De</label>
+            <input class="input input-date" type="date" id="range-from" required>
+          </div>
+          <div class="field">
+            <label class="label" for="range-to">Até</label>
+            <input class="input input-date" type="date" id="range-to" required>
+          </div>
+          <button class="btn btn-primary align-end" type="submit">Aplicar</button>
+        </form>
+        <div class="row text-sm muted">
+          <strong id="item-connector"></strong>
+          <span class="badge" id="item-status" hidden></span>
+          <span id="item-info"></span>
+        </div>
+      </div>
+
+      <div class="alert alert-error" id="app-error"></div>
+
+      <nav class="tabs" role="tablist">
+        <button class="tab" role="tab" data-tab="summary" aria-selected="true">Resumo</button>
+        <button class="tab" role="tab" data-tab="card" aria-selected="false">Fatura do cartão</button>
+        <button class="tab" role="tab" data-tab="recurring" aria-selected="false">Recorrentes</button>
+        <button class="tab" role="tab" data-tab="tags" aria-selected="false">Tags</button>
+        <button class="tab" role="tab" data-tab="wealth" aria-selected="false">Patrimônio</button>
+      </nav>
+
+      <!-- Resumo -->
+      <div class="stack" id="panel-summary" role="tabpanel">
+        <div class="field">
+          <label class="label" for="summary-search">Pesquisar</label>
+          <input class="input input-text" id="summary-search" type="search" autocomplete="off"
+            placeholder="Nome, descrição, tag ou valor (ex.: mercado, 3000)">
+        </div>
+        <p class="muted text-sm no-margin" id="summary-search-info" hidden></p>
+        <div class="stat-grid">
+          <div class="card stat">
+            <span class="eyebrow">Entradas</span>
+            <span class="amount amount-xl is-positive" id="total-income"></span>
+          </div>
+          <div class="card stat">
+            <span class="eyebrow">Saídas</span>
+            <span class="amount amount-xl is-negative" id="total-expense"></span>
+          </div>
+          <div class="card stat">
+            <span class="eyebrow">Fluxo final</span>
+            <span class="amount amount-xl" id="total-net"></span>
+          </div>
+        </div>
+        <p class="muted text-sm" id="internal-note"></p>
+        <div class="row-between" id="yield-toggle-row" hidden>
+          <p class="muted text-sm no-margin" id="yield-toggle-hint"></p>
+          <button type="button" class="btn btn-secondary btn-sm" id="yield-toggle-btn" aria-pressed="false">
+            Incluir rendimento previsto
+          </button>
+        </div>
+
+        <div class="card card-flush">
+          <details class="accordion">
+            <summary class="accordion-summary">
+              <h3>Entradas</h3>
+              <span class="eyebrow" id="income-count"></span>
+              <span class="amount is-positive" id="income-sum"></span>
+            </summary>
+            <table class="table">
+              <thead><tr><th>Data</th><th>Descrição</th><th>Tag</th><th class="col-amount">Valor</th></tr></thead>
+              <tbody id="income-list"></tbody>
+            </table>
+          </details>
+          <details class="accordion">
+            <summary class="accordion-summary">
+              <h3>Saídas</h3>
+              <span class="eyebrow" id="expense-count"></span>
+              <span class="amount is-negative" id="expense-sum"></span>
+            </summary>
+            <table class="table">
+              <thead><tr><th>Data</th><th>Descrição</th><th>Tag</th><th class="col-amount">Valor</th></tr></thead>
+              <tbody id="expense-list"></tbody>
+            </table>
+          </details>
+          <details class="accordion">
+            <summary class="accordion-summary">
+              <h3>Internas</h3>
+              <span class="eyebrow" id="internal-count"></span>
+              <span class="muted text-sm">fora dos totais</span>
+            </summary>
+            <table class="table">
+              <thead><tr><th>Data</th><th>Descrição</th><th>Conta</th><th class="col-amount">Valor</th></tr></thead>
+              <tbody id="internal-list"></tbody>
+            </table>
+          </details>
+        </div>
+
+        <div class="card">
+          <h2>Gastos por tag</h2>
+          <div class="stack" id="tag-breakdown"></div>
+        </div>
+
+      </div>
+
+      <!-- Fatura do cartão -->
+      <div class="stack" id="panel-card" role="tabpanel" hidden>
+        <p class="muted text-sm no-margin">
+          Faturas pelo mês de vencimento: escolher setembro mostra a fatura que vence em setembro. O valor é tudo que foi gasto no ciclo, mesmo o que você pagou antes da fatura fechar.
+        </p>
+        <div class="stat-grid">
+          <div class="card stat">
+            <span class="eyebrow" id="card-selected-label">Fatura do período</span>
+            <span class="amount amount-xl is-negative" id="card-selected-total"></span>
+            <span class="subtext" id="card-selected-due"></span>
+          </div>
+          <div class="card stat">
+            <span class="eyebrow">Próxima fatura</span>
+            <span class="amount amount-xl" id="card-next-total"></span>
+            <span class="subtext" id="card-next-due"></span>
+          </div>
+          <div class="card stat">
+            <span class="eyebrow">Limite disponível</span>
+            <span class="amount amount-xl" id="card-limit"></span>
+            <span class="subtext" id="card-limit-total"></span>
+          </div>
+        </div>
+
+        <div class="card" id="card-budget-card">
+          <h2>Quanto posso gastar no cartão</h2>
+          <p class="muted text-sm no-margin" id="card-budget-formula">
+            Salário − gastos fixos (recorrentes) = teto da fatura. A folga é esse teto menos a fatura do período.
+          </p>
+          <div class="stat-grid" style="margin-top: var(--space-4)">
+            <div class="card stat">
+              <span class="eyebrow">Salário</span>
+              <span class="amount amount-xl is-positive" id="card-budget-salary"></span>
+              <span class="subtext" id="card-budget-salary-source"></span>
+            </div>
+            <div class="card stat">
+              <span class="eyebrow">Gastos fixos</span>
+              <span class="amount amount-xl is-negative" id="card-budget-fixed"></span>
+              <span class="subtext">contas recorrentes</span>
+            </div>
+            <div class="card stat">
+              <span class="eyebrow">Teto da fatura</span>
+              <span class="amount amount-xl" id="card-budget-room"></span>
+              <span class="subtext">salário − fixos</span>
+            </div>
+            <div class="card stat">
+              <span class="eyebrow">Folga</span>
+              <span class="amount amount-xl" id="card-budget-remaining"></span>
+              <span class="subtext" id="card-budget-remaining-hint"></span>
+            </div>
+          </div>
+        </div>
+
+        <p class="muted text-sm no-margin" id="card-info"></p>
+
+        <div class="card">
+          <div class="row-between">
+            <h2>Faturas por vencimento</h2>
+            <div class="chart-legend">
+              <span class="legend-item legend-bill">Fechada</span>
+              <span class="legend-item legend-bill-estimated">Prevista</span>
+            </div>
+          </div>
+          <div class="chart" id="card-chart"></div>
+          <p class="muted text-sm no-margin">Clique numa barra para ver aquela fatura. O valor é o total gasto no ciclo: pagamentos feitos antes do fechamento não abatem. Barras claras são previstas pela soma das compras lançadas.</p>
+        </div>
+
+        <div class="card-grid">
+          <div class="card">
+            <h2>Maiores gastos</h2>
+            <div class="stack" id="card-spenders"></div>
+          </div>
+          <div class="card">
+            <h2>Gastos por tag</h2>
+            <div class="stack" id="card-tags"></div>
+          </div>
+        </div>
+
+        <div class="card card-flush">
+          <table class="table">
+            <thead><tr><th>Data</th><th>Descrição</th><th>Cartão</th><th>Tag</th><th class="col-amount">Valor</th></tr></thead>
+            <tbody id="card-purchases"></tbody>
+          </table>
+          <p class="muted text-sm empty" id="card-empty" hidden>Nenhuma compra no cartão com vencimento neste período.</p>
+        </div>
+      </div>
+
+      <!-- Recorrentes -->
+      <div class="stack" id="panel-recurring" role="tabpanel" hidden>
+        <div class="row-between">
+          <p class="muted text-sm no-margin">
+            Contas que se repetem todo mês. Carregue as transações que se repetem ou use o botão direito numa movimentação.
+          </p>
+          <div class="row">
+            <button class="btn btn-secondary" id="add-recurring-btn">Adicionar conta</button>
+            <button class="btn btn-primary" id="scan-recurring-btn">Carregar transações</button>
+          </div>
+        </div>
+        <div class="stat-grid">
+          <div class="card stat">
+            <span class="eyebrow">Gasto fixo mensal</span>
+            <span class="amount amount-xl" id="recurring-expected"></span>
+          </div>
+          <div class="card stat">
+            <span class="eyebrow">Pago no período</span>
+            <span class="amount amount-xl is-negative" id="recurring-paid"></span>
+          </div>
+          <div class="card stat">
+            <span class="eyebrow">Falta pagar</span>
+            <span class="amount amount-xl" id="recurring-pending"></span>
+          </div>
+        </div>
+        <p class="muted text-sm" id="recurring-info"></p>
+
+        <div class="card card-flush">
+          <table class="table">
+            <thead>
+              <tr><th>Conta</th><th>Status</th><th>Pagamento</th><th class="col-amount">Esperado</th><th class="col-amount">Pago</th><th></th></tr>
+            </thead>
+            <tbody id="recurring-list"></tbody>
+          </table>
+          <p class="muted text-sm empty" id="recurring-empty" hidden>
+            Nenhuma conta recorrente ainda. Clique em <strong>Carregar transações</strong> para encontrar as que se repetem.
+          </p>
+        </div>
+      </div>
+
+      <!-- Patrimônio -->
+      <div class="stack" id="panel-wealth" role="tabpanel" hidden>
+        <p class="muted text-sm no-margin">
+          Dinheiro parado ou investido: saldo das contas mais investimentos. Cartão de crédito fica de fora (é dívida).
+        </p>
+        <div class="stat-grid">
+          <div class="card stat">
+            <span class="eyebrow">Total</span>
+            <span class="amount amount-xl" id="wealth-total"></span>
+            <span class="subtext" id="wealth-change"></span>
+          </div>
+          <div class="card stat">
+            <span class="eyebrow">Contas</span>
+            <span class="amount amount-xl" id="wealth-accounts"></span>
+          </div>
+          <div class="card stat">
+            <span class="eyebrow">Investimentos</span>
+            <span class="amount amount-xl" id="wealth-investments"></span>
+          </div>
+          <div class="card stat">
+            <span class="eyebrow">Previsto / mês</span>
+            <span class="amount amount-xl" id="wealth-profit"></span>
+            <span class="subtext" id="wealth-profit-month"></span>
+          </div>
+        </div>
+        <p class="muted text-sm no-margin" id="wealth-info"></p>
+
+        <div class="card">
+          <div class="row-between">
+            <h2>Evolução em 12 meses</h2>
+            <div class="chart-legend" id="wealth-legend"></div>
+          </div>
+          <div class="chart" id="wealth-chart"></div>
+          <p class="muted text-sm no-margin">
+            Meses anteriores são estimados de trás para frente a partir do saldo de hoje e das movimentações; os rendimentos dos investimentos no período não entram na estimativa.
+          </p>
+        </div>
+
+        <div class="card" id="wealth-manual-card">
+          <div class="row-between">
+            <div class="stack stack-tight">
+              <h2 class="no-margin">Ajuste manual</h2>
+              <p class="muted text-sm no-margin" id="wealth-manual-hint">
+                O Open Finance às vezes não traz todas as caixinhas. Some a diferença aqui (valor + data).
+                Com o ajuste criado, use botão direito na linha da tabela para editar.
+              </p>
+              <p class="no-margin" id="wealth-manual-summary"></p>
+            </div>
+            <button class="btn btn-secondary" type="button" id="wealth-manual-btn">Definir valor</button>
+          </div>
+        </div>
+
+        <div class="card card-flush">
+          <table class="table">
+            <thead><tr><th>Conta</th><th>Tipo</th><th class="col-amount">Saldo</th></tr></thead>
+            <tbody id="balances"></tbody>
+          </table>
+        </div>
+
+        <div class="card card-flush" id="investments-card">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Investimento</th>
+                <th>Tipo</th>
+                <th>Taxa</th>
+                <th class="col-amount">Previsto/mês</th>
+                <th class="col-amount">Aplicado</th>
+                <th class="col-amount">Rendeu</th>
+                <th class="col-amount">Valor</th>
+              </tr>
+            </thead>
+            <tbody id="investments"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Tags -->
+      <div class="stack" id="panel-tags" role="tabpanel" hidden>
+        <div class="row-between">
+          <p class="muted text-sm no-margin">
+            Arraste um pagador/recebedor para uma tag, ou adicione um filtro (valor e/ou nome).
+            Ex.: só R$&nbsp;3.000 com "julio" no nome — o resto não entra na tag.
+          </p>
+          <button class="btn btn-primary" id="new-tag-btn">Nova tag</button>
+        </div>
+        <div class="tag-board">
+          <div class="card dropzone" data-drop-tag="">
+            <div class="row-between">
+              <h3>Sem tag</h3>
+              <span class="eyebrow" id="untagged-count"></span>
+            </div>
+            <p class="muted text-sm">Pagadores e recebedores do período que ainda não têm tag.</p>
+            <ul class="counterparty-list" id="untagged-list"></ul>
+          </div>
+          <div class="stack" id="tag-cards">
+            <p class="muted text-sm" id="no-tags" hidden>Nenhuma tag ainda. Clique em <strong>Nova tag</strong> para criar a primeira.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="context-menu" id="tag-menu" role="menu" hidden>
+    <div class="menu-header">
+      <strong class="menu-title" id="tag-menu-title"></strong>
+    </div>
+    <div id="tag-menu-manual" hidden>
+      <button class="menu-item" role="menuitem" data-menu-action="edit-manual">Editar ajuste</button>
+      <button class="menu-item menu-item-danger" role="menuitem" data-menu-action="clear-manual">Zerar ajuste</button>
+    </div>
+    <div id="tag-menu-yield" hidden>
+      <button class="menu-item" role="menuitem" data-menu-action="edit-yield">Editar rendimento</button>
+      <button class="menu-item menu-item-danger" role="menuitem" data-menu-action="reset-yield">Voltar ao calculado</button>
+    </div>
+    <div id="tag-menu-bill" hidden>
+      <button class="menu-item" role="menuitem" data-menu-action="edit-bill">Editar conta</button>
+      <div class="menu-separator" id="tag-menu-bill-sep"></div>
+    </div>
+    <div id="tag-menu-refund" hidden>
+      <button class="menu-item" role="menuitem" data-menu-action="toggle-refund" id="tag-menu-refund-btn"></button>
+      <div class="menu-separator"></div>
+    </div>
+    <div id="tag-menu-counterparty">
+      <button class="menu-item" role="menuitem" data-menu-action="alias">Editar descrição</button>
+      <button class="menu-item" role="menuitem" data-menu-action="recurring" id="tag-menu-recurring">Marcar como recorrente</button>
+      <div class="menu-separator"></div>
+      <div class="menu-header">
+        <span class="eyebrow">Tags</span>
+      </div>
+      <button class="menu-item menu-item-accent" role="menuitem" data-menu-action="new">+ Nova tag</button>
+      <div id="tag-menu-tags"></div>
+      <div class="menu-separator" id="tag-menu-remove-sep"></div>
+      <button class="menu-item menu-item-danger" role="menuitem" data-menu-action="remove" id="tag-menu-remove">Remover tag</button>
+    </div>
+  </div>
+
+  <dialog class="dialog" id="yield-dialog">
+    <form method="dialog" class="stack" id="yield-form">
+      <h2 id="yield-dialog-title">Editar rendimento</h2>
+      <p class="muted text-sm no-margin" id="yield-dialog-hint">
+        Ajuste o rendimento previsto deste investimento no Patrimônio: valor e data de entrada.
+      </p>
+      <div class="field">
+        <label class="label" for="yield-amount">Valor (R$)</label>
+        <input class="input mono" id="yield-amount" type="number" min="0.01" step="0.01" inputmode="decimal" required>
+      </div>
+      <div class="field">
+        <label class="label" for="yield-date">Data de entrada</label>
+        <input class="input" id="yield-date" type="date" required>
+      </div>
+      <div class="alert alert-error" id="yield-error"></div>
+      <div class="row">
+        <button class="btn btn-ghost" type="button" id="cancel-yield-btn">Cancelar</button>
+        <button class="btn btn-primary" type="submit">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="dialog" id="tag-dialog">
+    <form method="dialog" class="stack" id="tag-form">
+      <h2 id="tag-dialog-title">Nova tag</h2>
+      <div class="field">
+        <label class="label" for="tag-name">Nome</label>
+        <input class="input input-text" id="tag-name" maxlength="40" autocomplete="off" required>
+      </div>
+      <fieldset class="field fieldset">
+        <legend class="label">Cor</legend>
+        <div class="swatches" id="tag-colors"></div>
+      </fieldset>
+      <div class="alert alert-error" id="tag-error"></div>
+      <div class="row-between">
+        <button class="btn btn-danger" type="button" id="delete-tag-btn" hidden>Excluir tag</button>
+        <div class="row">
+          <button class="btn btn-ghost" type="button" id="cancel-tag-btn">Cancelar</button>
+          <button class="btn btn-primary" type="submit">Salvar</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="dialog" id="alias-dialog">
+    <form method="dialog" class="stack" id="alias-form">
+      <h2>Descrição</h2>
+      <p class="muted text-sm no-margin">
+        Um nome curto para <strong id="alias-original"></strong>, como "Barbeiro" ou "Escola".
+        Vale para todas as movimentações dele.
+      </p>
+      <div class="field">
+        <label class="label" for="alias-input">Descrição</label>
+        <input class="input input-text" id="alias-input" maxlength="60" autocomplete="off">
+      </div>
+      <div class="alert alert-error" id="alias-error"></div>
+      <div class="row-between">
+        <button class="btn btn-danger" type="button" id="remove-alias-btn">Remover descrição</button>
+        <div class="row">
+          <button class="btn btn-ghost" type="button" id="cancel-alias-btn">Cancelar</button>
+          <button class="btn btn-primary" type="submit">Salvar</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="dialog dialog-wide" id="scan-dialog">
+    <form method="dialog" class="stack" id="scan-form">
+      <div class="row-between">
+        <h2>Transações que se repetem</h2>
+        <span class="eyebrow" id="scan-count"></span>
+      </div>
+      <p class="muted text-sm no-margin" id="scan-info"></p>
+      <div class="row-between" id="scan-toolbar" hidden>
+        <label class="checkbox"><input type="checkbox" id="scan-all"> Marcar todas</label>
+        <span class="muted text-sm" id="scan-selected"></span>
+      </div>
+      <ul class="suggestion-list scan-list" id="scan-list"></ul>
+      <div class="alert alert-error" id="scan-error"></div>
+      <div class="row-between">
+        <span></span>
+        <div class="row">
+          <button class="btn btn-ghost" type="button" id="cancel-scan-btn">Cancelar</button>
+          <button class="btn btn-primary" type="submit" id="save-scan-btn">Salvar</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="dialog" id="create-recurring-dialog">
+    <form method="dialog" class="stack" id="create-recurring-form">
+      <h2 id="create-recurring-title">Adicionar conta recorrente</h2>
+      <div class="field">
+        <label class="label" for="bill-label">O que é</label>
+        <input class="input input-text" id="bill-label" maxlength="60" autocomplete="off" placeholder="Ex.: Aluguel, Escola, Barbeiro" required>
+      </div>
+      <div class="row">
+        <div class="field grow">
+          <label class="label" for="bill-amount">Valor mensal (R$)</label>
+          <input class="input mono" id="bill-amount" type="number" min="0.01" step="0.01" inputmode="decimal" required>
+        </div>
+        <div class="field">
+          <label class="label" for="bill-day">Vence dia</label>
+          <input class="input mono input-day" id="bill-day" type="number" min="1" max="31" step="1" inputmode="numeric" required>
+        </div>
+      </div>
+      <div class="field">
+        <label class="label" for="bill-link">Vincular a (opcional)</label>
+        <div class="link-picked" id="bill-link-picked" hidden>
+          <span class="stack-tight">
+            <span id="bill-link-name"></span>
+            <span class="subtext" id="bill-link-detail"></span>
+          </span>
+          <button class="btn btn-ghost btn-sm" type="button" id="bill-link-clear">Trocar</button>
+        </div>
+        <input class="input input-text" id="bill-link" autocomplete="off" placeholder="Nome, nome + valor (ex.: Julio 3000), CPF ou CNPJ">
+        <ul class="link-results" id="bill-link-results"></ul>
+        <span class="subtext">Com vínculo, quando houver uma saída para essa pessoa com valor parecido perto do vencimento, o app pergunta se é o pagamento. Sem vínculo, você marca como pago à mão.</span>
+      </div>
+      <div class="alert alert-error" id="create-recurring-error"></div>
+      <div class="row-between">
+        <span></span>
+        <div class="row">
+          <button class="btn btn-ghost" type="button" id="cancel-create-recurring-btn">Cancelar</button>
+          <button class="btn btn-primary" type="submit" id="create-recurring-submit">Adicionar</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="dialog" id="expected-dialog">
+    <form method="dialog" class="stack" id="expected-form">
+      <h2>Valor esperado</h2>
+      <p class="muted text-sm no-margin">
+        Quanto <strong id="expected-name"></strong> costuma custar por mês. <span id="expected-average"></span>
+      </p>
+      <div class="field">
+        <label class="label" for="expected-input">Valor mensal (R$)</label>
+        <input class="input mono" id="expected-input" type="number" min="0.01" step="0.01" inputmode="decimal" required>
+      </div>
+      <div class="alert alert-error" id="expected-error"></div>
+      <div class="row-between">
+        <button class="btn btn-ghost" type="button" id="expected-average-btn">Usar a média</button>
+        <div class="row">
+          <button class="btn btn-ghost" type="button" id="cancel-expected-btn">Cancelar</button>
+          <button class="btn btn-primary" type="submit">Salvar</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="dialog" id="wealth-manual-dialog">
+    <form method="dialog" class="stack" id="wealth-manual-form">
+      <h2>Ajuste manual de investimentos</h2>
+      <p class="muted text-sm no-margin">
+        Valor que falta no Open Finance para bater com o app do banco, com a data em que entrou.
+        Ex.: banco R$&nbsp;158.770,71 − OF R$&nbsp;70.232,19 = R$&nbsp;88.538,52.
+      </p>
+      <div class="field">
+        <label class="label" for="wealth-manual-amount">Valor a somar (R$)</label>
+        <input class="input mono" id="wealth-manual-amount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Ex.: 88538.52" required>
+      </div>
+      <div class="field">
+        <label class="label" for="wealth-manual-date">Data de entrada</label>
+        <input class="input" id="wealth-manual-date" type="date" required>
+      </div>
+      <div class="field">
+        <label class="label" for="wealth-manual-note">Nota (opcional)</label>
+        <input class="input input-text" id="wealth-manual-note" maxlength="80" autocomplete="off" placeholder="Ex.: caixinhas fora do OF">
+      </div>
+      <div class="alert alert-error" id="wealth-manual-error"></div>
+      <div class="row-between">
+        <button class="btn btn-danger" type="button" id="wealth-manual-clear-btn">Zerar</button>
+        <div class="row">
+          <button class="btn btn-ghost" type="button" id="cancel-wealth-manual-btn">Cancelar</button>
+          <button class="btn btn-primary" type="submit">Salvar</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="dialog" id="filter-dialog">
+    <form method="dialog" class="stack" id="filter-form">
+      <h2 id="filter-dialog-title">Filtro da tag</h2>
+      <p class="muted text-sm no-margin">
+        A movimentação só recebe a tag se passar em <strong>todos</strong> os critérios preenchidos.
+        Deixe um campo vazio para não restringir por ele.
+      </p>
+      <div class="field">
+        <label class="label" for="filter-amount">Valor exato (R$)</label>
+        <input class="input mono" id="filter-amount" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="Ex.: 3000">
+      </div>
+      <div class="field">
+        <label class="label" for="filter-contains">Nome contém</label>
+        <input class="input input-text" id="filter-contains" maxlength="80" autocomplete="off" placeholder="Ex.: Julio">
+      </div>
+      <div class="alert alert-error" id="filter-error"></div>
+      <div class="row">
+        <button class="btn btn-ghost" type="button" id="cancel-filter-btn">Cancelar</button>
+        <button class="btn btn-primary" type="submit">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <template id="tag-card-template">
+    <div class="card dropzone tag-card">
+      <div class="row-between">
+        <div class="row">
+          <span class="tag-badge"></span>
+          <span class="amount text-sm total"></span>
+        </div>
+        <button class="btn btn-ghost edit">Editar</button>
+      </div>
+      <ul class="filter-list"></ul>
+      <button class="btn btn-ghost btn-sm add-filter" type="button">+ Filtro por valor/nome</button>
+      <ul class="counterparty-list"></ul>
+      <p class="muted text-sm hint">Arraste pagadores/recebedores para cá, ou use um filtro.</p>
+    </div>
+  </template>
+</body>
+</html>

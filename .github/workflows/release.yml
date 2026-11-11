@@ -1,0 +1,86 @@
+name: Build e release
+
+# A cada push na branch principal: roda testes, gera o .exe portátil do Windows
+# e publica uma Release "v<versão do package.json>" (se essa versão ainda não tiver release).
+# Para lançar nova versão: suba o "version" no package.json e faça push.
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  build-windows:
+    needs: test
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - id: version
+        shell: bash
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      - run: npm ci
+      - name: Smoke test (servidor no Node do Electron)
+        shell: bash
+        env:
+          ELECTRON_RUN_AS_NODE: "1"
+          PORT: "18999"
+          FIN_CONTROL_ROOT: ${{ runner.temp }}
+        run: |
+          node_modules/electron/dist/electron.exe src/server.ts --no-open &
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:18999/api/status; then kill $! || true; exit 0; fi
+            sleep 1
+          done
+          echo "Servidor não subiu no Electron"; exit 1
+      - run: npx electron-builder --win portable --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fin-control-${{ steps.version.outputs.version }}-win-x64
+          path: release/*.exe
+          if-no-files-found: error
+
+  release:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.build-windows.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: fin-control-${{ needs.build-windows.outputs.version }}-win-x64
+          path: dist
+      - name: Publicar release v${{ env.VERSION }}
+        run: |
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "Release v$VERSION já existe — suba a versão no package.json para publicar outra."
+            exit 0
+          fi
+          gh release create "v$VERSION" dist/*.exe \
+            --target "$GITHUB_SHA" \
+            --title "Fin Control $VERSION" \
+            --notes "Executável portátil para Windows (x64). Baixe o .exe abaixo e veja o passo a passo no README."

@@ -1,0 +1,55 @@
+{
+  "name": "fin-control",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Controle financeiro pessoal via Open Finance (Pluggy)",
+  "author": "Catrinck",
+  "type": "module",
+  "main": "src/electron/main.ts",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/server.ts",
+    "desktop": "electron .",
+    "dist:win": "electron-builder --win portable",
+    "dist:dir": "electron-builder --win --dir",
+    "teste": "node --experimental-strip-types --disable-warning=ExperimentalWarning --env-file=.env scripts/teste-conexao.ts",
+    "diagnostico": "node --experimental-strip-types --disable-warning=ExperimentalWarning --env-file=.env scripts/diagnostico.ts",
+    "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test tests/**/*.test.ts",
+    "test:login": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test tests/pluggy-client-auth.test.ts tests/api-login.test.ts",
+    "typecheck": "tsc -p tsconfig.json && tsc -p src/web/tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "electron": "^45.3.0",
+    "electron-builder": "^26.18.0",
+    "typescript": "^7.0.2"
+  },
+  "build": {
+    "appId": "dev.catrinck.fin-control",
+    "productName": "Fin Control",
+    "copyright": "Copyright © Catrinck",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "Fin-Control-${version}-portable.exe"
+    }
+  }
+}

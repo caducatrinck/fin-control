@@ -1,0 +1,22 @@
+---
+description: Todo código do projeto é TypeScript estrito, nunca JavaScript puro
+alwaysApply: true
+---
+
+# TypeScript sempre
+
+- Nunca crie arquivos `.js`/`.mjs`/`.cjs`. Servidor, scripts e código do navegador são `.ts`.
+- O navegador recebe `/<nome>.js`, gerado pelo servidor a partir de `src/web/<nome>.ts` (`stripTypeScriptTypes`). No HTML, referencie `.js`.
+- Só sintaxe apagável (`erasableSyntaxOnly`): sem `enum`, `namespace` ou parameter properties no construtor.
+- Imports relativos com extensão `.ts`; tipos com `import type`.
+- Tudo tipado: parâmetros, retornos de funções exportadas, respostas de API. Nada de `any`; dados externos entram como `unknown` e são validados.
+- Contratos entre servidor e página ficam em `src/shared/api.ts` (`ApiRoutes`). Rota nova: adicione ao contrato primeiro.
+- Tipos da API da Pluggy ficam em `src/pluggy/types.ts`.
+- Depois de mudanças, rode `npm run typecheck` (deve passar sem erros).
+
+```ts
+// ❌ const data = await res.json(); data.items.map(...)
+// ✅
+const data: unknown = await res.json();
+const { itemId } = parseItem(data); // valida e retorna ItemRequest
+```

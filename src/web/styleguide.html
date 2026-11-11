@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fin-control · style guide</title>
+  <script src="/theme.js"></script>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="container stack">
+    <header class="app-header">
+      <div class="brand">
+        <h1>Style guide</h1>
+        <span class="eyebrow">Tokens e componentes do fin-control</span>
+      </div>
+      <div class="row">
+        <a class="btn btn-ghost" href="/">Voltar ao app</a>
+        <button class="btn btn-secondary theme-toggle" data-theme-toggle></button>
+      </div>
+    </header>
+
+    <section class="card">
+      <h2>Tipografia</h2>
+      <div class="stack">
+        <div><span class="eyebrow">Display · Space Grotesk · uppercase</span><h1>Título XL</h1></div>
+        <div><h2>Título LG</h2></div>
+        <div><h3>Título MD</h3></div>
+        <p>Texto corrido usa Inter, em caixa normal, com entrelinha 1.6 para leitura confortável de parágrafos longos, descrições e instruções.</p>
+        <p class="muted text-sm">Texto secundário (.muted .text-sm) para legendas e informações de apoio.</p>
+        <p><span class="amount amount-lg">R$ 12.345,67</span> · <code>JetBrains Mono</code> para valores, datas e IDs.</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Cores</h2>
+      <div class="row">
+        <span class="badge">--text</span>
+        <span class="badge muted">--text-muted</span>
+        <span class="badge badge-positive">--positive</span>
+        <span class="badge badge-warning">--warning</span>
+        <span class="badge badge-negative">--negative</span>
+        <a href="#">--accent (links)</a>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Botões</h2>
+      <div class="row">
+        <button class="btn btn-primary">Primário</button>
+        <button class="btn btn-secondary">Secundário</button>
+        <button class="btn btn-ghost">Ghost</button>
+        <button class="btn btn-danger">Perigo</button>
+        <button class="btn btn-primary" disabled>Desabilitado</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Formulário</h2>
+      <div class="stack">
+        <div class="field">
+          <label class="label" for="sg-input">Rótulo</label>
+          <input class="input" id="sg-input" placeholder="Placeholder">
+        </div>
+        <label class="checkbox"><input type="checkbox"> Checkbox</label>
+        <div class="alert alert-error">Mensagem de erro.</div>
+        <div class="alert alert-info">Mensagem informativa.</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Passos e definições</h2>
+      <ol class="steps">
+        <li><span>Primeiro passo.</span></li>
+        <li><span>Segundo passo.</span></li>
+      </ol>
+      <dl class="definition">
+        <dt>Chave</dt><dd class="mono">valor</dd>
+        <dt>Outra chave</dt><dd>outro valor</dd>
+      </dl>
+    </section>
+
+    <section class="card">
+      <div class="account-header">
+        <div><h3>Conta corrente</h3><span class="eyebrow">BANK · CHECKING_ACCOUNT</span></div>
+        <span class="amount amount-lg">R$ 1.234,56</span>
+      </div>
+      <table class="table">
+        <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th class="col-amount">Valor</th></tr></thead>
+        <tbody>
+          <tr><td class="col-date">24/09/2026</td><td>Salário</td><td class="muted">Income</td><td class="col-amount amount is-positive">R$ 5.000,00</td></tr>
+          <tr><td class="col-date">23/09/2026</td><td>Mercado</td><td class="muted">Groceries</td><td class="col-amount amount is-negative">-R$ 320,15</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>
