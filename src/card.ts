@@ -302,7 +302,7 @@ export function buildCard(input: CardInput): CardResponse {
     month: string,
     total: number,
     open: boolean,
-  ): Omit<CardBill, "month" | "total" | "closedAmount" | "dueDate" | "estimated"> => {
+  ): Omit<CardBill, "month" | "label" | "total" | "closedAmount" | "dueDate" | "estimated"> => {
     const mine = overrides.filter((o) => o.month === month && creditIds.includes(o.accountId));
     const perCard = cardTotalByMonth.get(month);
     const bankAmount = mine.length
@@ -337,6 +337,22 @@ export function buildCard(input: CardInput): CardResponse {
       reconciliation,
     };
   };
+  // O Nubank chama a fatura pelo mês em que ela FECHA (a que fecha em 30/11 e vence em 09/12 é a "de novembro").
+  // As chaves internas seguem sendo o mês de vencimento; estas funções convertem de/para o mês de fechamento.
+  const cycleList = [...cycles.values()];
+  const dueOffset = cycleList.some((c) => c.closeDay !== null && c.dueDay !== null && c.dueDay > c.closeDay) ? 0 : 1;
+  const closeMonthOf = (bill: Bill): string | null => {
+    const closing = bill.billClosingDate;
+    return closing && /^\d{4}-\d{2}/.test(closing) ? closing.slice(0, 7) : null;
+  };
+  const labelOf = (dueMonth: string): string => {
+    const known = billsByMonth.get(dueMonth)?.map(closeMonthOf).find((m): m is string => m !== null);
+    return known ?? addMonths(dueMonth, -dueOffset);
+  };
+  const dueOfLabel = (closeMonth: string): string => {
+    for (const bill of billById.values()) if (closeMonthOf(bill) === closeMonth) return bill.dueDate.slice(0, 7);
+    return addMonths(closeMonth, dueOffset);
+  };
   const billFor = (month: string): CardBill => {
     const official = officialByMonth.get(month);
     const spent = estimatedByMonth.get(month);
@@ -345,6 +361,7 @@ export function buildCard(input: CardInput): CardResponse {
       const total = round(spent ?? official.total);
       return {
         month,
+        label: labelOf(month),
         total,
         closedAmount: round(official.total),
         dueDate: official.dueDate,
@@ -356,6 +373,7 @@ export function buildCard(input: CardInput): CardResponse {
     const total = round(spent ?? 0);
     return {
       month,
+      label: labelOf(month),
       total,
       closedAmount: null,
       dueDate: day === null ? null : `${month}-${String(day).padStart(2, "0")}`,
@@ -373,8 +391,10 @@ export function buildCard(input: CardInput): CardResponse {
     history.push(billFor(month));
   }
 
-  const months: string[] = [];
-  for (let month = range.from.slice(0, 7); month <= range.to.slice(0, 7); month = addMonths(month, 1)) months.push(month);
+  // O período escolhido é em meses de fechamento; convertemos para as chaves (vencimento) das faturas.
+  const labels: string[] = [];
+  for (let month = range.from.slice(0, 7); month <= range.to.slice(0, 7); month = addMonths(month, 1)) labels.push(month);
+  const months = labels.map(dueOfLabel);
   const monthSet = new Set(months);
   const selectedBills = months.map(billFor);
   const selectedPurchases = purchases
@@ -412,6 +432,7 @@ export function buildCard(input: CardInput): CardResponse {
     bills: history,
     selected: {
       months,
+      labels,
       total: billTotal,
       closedAmount: selectedBills.every((b) => b.closedAmount !== null)
         ? round(selectedBills.reduce((acc, b) => acc + (b.closedAmount ?? 0), 0))

@@ -357,10 +357,12 @@ export interface CardInfo {
   availableCreditLimit: number | null;
 }
 
-/** Fatura por mês de vencimento: fechada (da Pluggy) ou prevista (ainda aberta). */
+/** Fatura: fechada (da Pluggy) ou prevista (ainda aberta). Chave = mês de vencimento; nome = mês de fechamento. */
 export interface CardBill {
-  /** yyyy-mm do vencimento. */
+  /** yyyy-mm do vencimento (chave interna: valor do banco, estimativas). */
   month: string;
+  /** yyyy-mm do fechamento: o mês que o Nubank usa para nomear a fatura. */
+  label: string;
   /** Soma das transações da API na fatura (compras menos estornos). Não inclui parcelas projetadas. */
   total: number;
   /** `totalAmount` da fatura fechada na Pluggy; `null` se ainda aberta. */
@@ -440,7 +442,10 @@ export interface CardResponse {
   bills: CardBill[];
   /** Fatura(s) com vencimento no período selecionado. */
   selected: {
+    /** Chaves (mês de vencimento) das faturas do período. */
     months: string[];
+    /** Mês de fechamento de cada uma (o nome que aparece na tela). */
+    labels: string[];
     total: number;
     closedAmount: number | null;
     dueDate: string | null;

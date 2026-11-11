@@ -343,6 +343,42 @@ describe("projeção de parcelas ausentes", () => {
   });
 });
 
+describe("fatura nomeada pelo mês de fechamento (como no Nubank)", () => {
+  const raw = [
+    cardTx("fechada", "DEBIT", 100, "2026-10-20", "Compra de outubro", { billId: "bill-nov" }),
+    cardTx("aberta", "DEBIT", 50, "2026-11-04", "Compra de novembro", { billForecastDate: "2026-12" }),
+  ];
+  const select = (from: string, to: string) =>
+    buildCard({
+      accounts: [ultraviolet()],
+      raw,
+      transactions: raw.map((t) => period(t)),
+      bills: new Map([["acc-card", [NOV_BILL]]]),
+      billsAvailable: true,
+      range: { from, to },
+      today: TODAY,
+      fixedMonthly: 0,
+    });
+
+  it("a fatura que fecha em novembro (vence em dezembro) é a de novembro", () => {
+    const nov = select("2026-11-01", "2026-11-30");
+    assert.deepEqual(nov.selected.months, ["2026-12"]);
+    assert.deepEqual(nov.selected.labels, ["2026-11"]);
+    assert.equal(nov.selected.total, 50);
+    assert.equal(nov.selected.estimated, true);
+    assert.equal(nov.next?.month, "2026-12");
+    assert.equal(nov.next?.label, "2026-11");
+  });
+
+  it("a fatura fechada em 31/10 (vence 09/11) é a de outubro, com o valor oficial do banco", () => {
+    const out = select("2026-10-01", "2026-10-31");
+    assert.deepEqual(out.selected.months, ["2026-11"]);
+    assert.deepEqual(out.selected.labels, ["2026-10"]);
+    assert.equal(out.selected.closedAmount, 4837.66);
+    assert.equal(out.bills.find((b) => b.month === "2026-11")?.label, "2026-10");
+  });
+});
+
 describe("estorno de compra em fatura fechada", () => {
   const dec = { billForecastDate: "2026-12" };
   const wellhub = cardTx("wh", "DEBIT", 199.9, "2026-10-29", "Wellhub", { billId: "bill-nov" });

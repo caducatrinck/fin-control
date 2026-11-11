@@ -696,7 +696,7 @@ function renderNextBill(data: CardResponse): void {
   const { next, cards } = data;
   el("card-next-total").textContent = next ? money(next.total) : "—";
   el("card-next-due").textContent = next
-    ? [monthLabel(next.month), "valor parcial/estimado da API", billDue(next)].filter(Boolean).join(" · ")
+    ? [monthLabel(next.label), "valor parcial/estimado da API", billDue(next)].filter(Boolean).join(" · ")
     : "";
   el("card-next-source").textContent = next
     ? next.forecastCount
@@ -839,8 +839,9 @@ function renderCard(data: CardResponse): void {
   const { selected, next, cards, budget } = data;
   const tags = tagById();
   const single = selected.months.length === 1 ? selected.months[0] : undefined;
+  const singleLabel = selected.months.length === 1 ? selected.labels[0] : undefined;
 
-  el("card-selected-label").textContent = single ? `Fatura de ${monthLabel(single)}` : "Faturas do período";
+  el("card-selected-label").textContent = singleLabel ? `Fatura de ${monthLabel(singleLabel)}` : "Faturas do período";
   el("card-selected-total").textContent = money(selected.total);
   el("card-selected-due").textContent = [
     selected.estimated ? "prevista" : "fechada",
@@ -849,7 +850,12 @@ function renderCard(data: CardResponse): void {
   ]
     .filter(Boolean)
     .join(" · ");
-  el("card-selected-recon").textContent = single ? reconciliationText(data.bills.find((b) => b.month === single)) : "";
+  const singleBill = single ? data.bills.find((b) => b.month === single) : undefined;
+  el("card-selected-recon").textContent = !single
+    ? ""
+    : singleBill?.estimated && singleBill.projected.length
+      ? `Com ${singleBill.projected.length} parcelas projetadas (+${money(singleBill.projectedTotal)}): estimativa de ${money(singleBill.total + singleBill.projectedTotal)}.`
+      : reconciliationText(singleBill);
   renderNextBill(data);
   renderCardOptions(data);
 
@@ -987,15 +993,15 @@ function renderCardChart(bills: readonly CardBill[], selected: ReadonlySet<strin
     const classes = ["chart-bar", b.estimated ? "is-estimated" : "", selected.has(b.month) ? "is-selected" : ""];
     const group = svg(
       "g",
-      { class: classes.filter(Boolean).join(" "), "data-bill-month": b.month },
+      { class: classes.filter(Boolean).join(" "), "data-bill-month": b.label },
       svg("rect", { class: "chart-bar-hit", x: pad.left + slot * i, y: pad.top, width: slot, height: height - pad.top - pad.bottom }),
       svg("rect", { x: cx - barWidth / 2, y: top, width: barWidth, height: Math.max(1, height - pad.bottom - top), rx: 3 }),
-      svg("text", { class: "chart-label", x: cx, y: height - 8, "text-anchor": "middle" }, document.createTextNode(monthLabel(b.month))),
+      svg("text", { class: "chart-label", x: cx, y: height - 8, "text-anchor": "middle" }, document.createTextNode(monthLabel(b.label))),
       svg(
         "title",
         {},
         document.createTextNode(
-          [`${monthLabel(b.month)}: ${money(b.total)}`, b.estimated ? "parcial/estimada" : closedNote(b.closedAmount)]
+          [`${monthLabel(b.label)}: ${money(b.total)}`, b.estimated ? "parcial/estimada" : closedNote(b.closedAmount)]
             .filter(Boolean)
             .join(" · "),
         ),
@@ -1007,7 +1013,7 @@ function renderCardChart(bills: readonly CardBill[], selected: ReadonlySet<strin
   el("card-chart").replaceChildren(
     svg(
       "svg",
-      { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "Faturas do cartão por mês de vencimento" },
+      { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "Faturas do cartão por mês de fechamento" },
       ...grid,
       ...bars,
     ),
