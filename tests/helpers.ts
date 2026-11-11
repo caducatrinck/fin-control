@@ -39,6 +39,7 @@ export function periodTx(
     tagId: null,
     internal: false,
     refund: false,
+    refundLink: null,
     cancelled: false,
     ...partial,
   };

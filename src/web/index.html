@@ -218,11 +218,20 @@
             <span class="eyebrow" id="card-selected-label">Fatura do período</span>
             <span class="amount amount-xl is-negative" id="card-selected-total"></span>
             <span class="subtext" id="card-selected-due"></span>
+            <span class="subtext" id="card-selected-recon"></span>
           </div>
           <div class="card stat">
-            <span class="eyebrow">Próxima fatura</span>
+            <span class="eyebrow" id="card-next-label">Próxima fatura · parcial/estimada</span>
             <span class="amount amount-xl" id="card-next-total"></span>
             <span class="subtext" id="card-next-due"></span>
+            <span class="subtext" id="card-next-source"></span>
+            <span class="subtext" id="card-next-projected"></span>
+            <form class="row" id="card-override-form">
+              <input class="input mono" id="card-override-input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Valor no app do banco" aria-label="Valor real da fatura no app do banco">
+              <button class="btn btn-ghost" type="submit">Informar</button>
+              <button class="btn btn-ghost" type="button" id="card-override-clear" hidden>Limpar</button>
+            </form>
+            <span class="subtext" id="card-override-diff"></span>
           </div>
           <div class="card stat">
             <span class="eyebrow">Limite disponível</span>
@@ -261,6 +270,18 @@
         </div>
 
         <p class="muted text-sm no-margin" id="card-info"></p>
+
+        <div class="card stack" id="card-options">
+          <h2>Opções do cartão</h2>
+          <label class="row text-sm">
+            <input type="checkbox" id="card-opt-project">
+            Projetar parcelas que a API ainda não mandou (estimativa; aparece separada e não entra no valor da API)
+          </label>
+          <label class="row text-sm">
+            Janela para parear estorno com a compra (dias)
+            <input class="input mono" id="card-opt-window" type="number" min="1" max="365" step="1" inputmode="numeric">
+          </label>
+        </div>
 
         <div class="card">
           <div class="row-between">
@@ -489,6 +510,22 @@
       <div class="row">
         <button class="btn btn-ghost" type="button" id="cancel-yield-btn">Cancelar</button>
         <button class="btn btn-primary" type="submit">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="dialog" id="refund-link-dialog">
+    <form method="dialog" class="stack" id="refund-link-form">
+      <h2>Vincular estorno</h2>
+      <p class="muted text-sm no-margin" id="refund-link-hint"></p>
+      <div class="field">
+        <label class="label" for="refund-link-select">Compra original</label>
+        <select class="input" id="refund-link-select" required></select>
+      </div>
+      <div class="alert alert-error" id="refund-link-error"></div>
+      <div class="row">
+        <button class="btn btn-ghost" type="button" id="cancel-refund-link-btn">Cancelar</button>
+        <button class="btn btn-primary" type="submit">Vincular</button>
       </div>
     </form>
   </dialog>

@@ -2,8 +2,12 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
+  DEFAULT_CARD_SETTINGS,
   TAG_COLORS,
   type Alias,
+  type BillOverride,
+  type CardSettings,
+  type RefundLinkOverride,
   type RecurringBill,
   type RecurringMatch,
   type RefundOverride,
@@ -98,8 +102,53 @@ function parseRefundOverride(value: unknown): RefundOverride | null {
   return { id, refund };
 }
 
+function parseRefundLink(value: unknown): RefundLinkOverride | null {
+  if (!isRecord(value)) return null;
+  const { refundId, purchaseId } = value;
+  if (typeof refundId !== "string" || !refundId) return null;
+  if (purchaseId !== null && (typeof purchaseId !== "string" || !purchaseId)) return null;
+  return { refundId, purchaseId };
+}
+
+function parseBillOverride(value: unknown): BillOverride | null {
+  if (!isRecord(value)) return null;
+  const { accountId, month, amount } = value;
+  if (typeof accountId !== "string" || !accountId) return null;
+  if (typeof month !== "string" || !/^\d{4}-\d{2}$/.test(month)) return null;
+  if (typeof amount !== "number" || !Number.isFinite(amount)) return null;
+  return { accountId, month, amount: Math.round(amount * 100) / 100 };
+}
+
+export const MAX_REFUND_WINDOW_DAYS = 365;
+
+function parseCardSettings(value: unknown): CardSettings {
+  if (!isRecord(value)) return { ...DEFAULT_CARD_SETTINGS };
+  const { projectInstallments, refundWindowDays } = value;
+  return {
+    projectInstallments: projectInstallments === true,
+    refundWindowDays:
+      typeof refundWindowDays === "number" &&
+      Number.isInteger(refundWindowDays) &&
+      refundWindowDays >= 1 &&
+      refundWindowDays <= MAX_REFUND_WINDOW_DAYS
+        ? refundWindowDays
+        : DEFAULT_CARD_SETTINGS.refundWindowDays,
+  };
+}
+
 function emptyData(): TagsData {
-  return { tags: [], rules: [], filters: [], aliases: [], recurring: [], matches: [], refundOverrides: [] };
+  return {
+    tags: [],
+    rules: [],
+    filters: [],
+    aliases: [],
+    recurring: [],
+    matches: [],
+    refundOverrides: [],
+    refundLinks: [],
+    billOverrides: [],
+    cardSettings: { ...DEFAULT_CARD_SETTINGS },
+  };
 }
 
 function parseData(value: unknown): TagsData {
@@ -123,9 +172,16 @@ function parseData(value: unknown): TagsData {
   const refundOverrides = Array.isArray(value.refundOverrides)
     ? value.refundOverrides.map(parseRefundOverride).filter((r) => r !== null)
     : [];
+  const refundLinks = Array.isArray(value.refundLinks) ? value.refundLinks.map(parseRefundLink).filter((r) => r !== null) : [];
+  const billOverrides = Array.isArray(value.billOverrides)
+    ? value.billOverrides.map(parseBillOverride).filter((r) => r !== null)
+    : [];
   return {
     tags,
     refundOverrides,
+    refundLinks,
+    billOverrides,
+    cardSettings: parseCardSettings(value.cardSettings),
     rules: rules as TagRule[],
     filters: filters as TagFilter[],
     aliases,
@@ -171,6 +227,9 @@ export async function getTags(): Promise<TagsData> {
     recurring: data.recurring.map((r) => ({ ...r })),
     matches: data.matches.map((m) => ({ ...m })),
     refundOverrides: data.refundOverrides.map((r) => ({ ...r })),
+    refundLinks: data.refundLinks.map((r) => ({ ...r })),
+    billOverrides: data.billOverrides.map((r) => ({ ...r })),
+    cardSettings: { ...data.cardSettings },
   };
 }
 
@@ -269,6 +328,29 @@ export async function setRefund(id: string, refund: boolean | null): Promise<voi
   data.refundOverrides = data.refundOverrides.filter((r) => r.id !== id);
   if (refund !== null) data.refundOverrides.push({ id, refund });
   await persist(data);
+}
+
+/** `purchaseId` undefined volta ao pareamento automático; `null` desvincula; string vincula à mão. */
+export async function setRefundLink(refundId: string, purchaseId: string | null | undefined): Promise<void> {
+  const data = await load();
+  data.refundLinks = data.refundLinks.filter((r) => r.refundId !== refundId);
+  if (purchaseId !== undefined) data.refundLinks.push({ refundId, purchaseId });
+  await persist(data);
+}
+
+/** `amount: null` remove o valor informado daquele cartão e mês. */
+export async function setBillOverride(accountId: string, month: string, amount: number | null): Promise<void> {
+  const data = await load();
+  data.billOverrides = data.billOverrides.filter((o) => !(o.accountId === accountId && o.month === month));
+  if (amount !== null) data.billOverrides.push({ accountId, month, amount: Math.round(amount * 100) / 100 });
+  await persist(data);
+}
+
+export async function setCardSettings(patch: Partial<CardSettings>): Promise<CardSettings> {
+  const data = await load();
+  data.cardSettings = parseCardSettings({ ...data.cardSettings, ...patch });
+  await persist(data);
+  return { ...data.cardSettings };
 }
 
 export async function setAlias(key: string, label: string, alias: string | null): Promise<void> {

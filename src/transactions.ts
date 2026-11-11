@@ -5,9 +5,11 @@ import {
   type Direction,
   type Movement,
   type PeriodTransaction,
+  type RefundLink,
   type TagFilter,
   type TagRule,
 } from "./shared/api.ts";
+import { isIofText, isRefundCredit, planKeyOf, type RefundMatch } from "./refunds.ts";
 export { cashflowOf, computeTotals, expenseImpactOf, expensesByTag, roundMoney } from "./shared/totals.ts";
 
 const INTERNAL_CATEGORY =
@@ -145,6 +147,7 @@ export function isRefund(t: Transaction, accountType: AccountType, internal: boo
   if (t.type !== "CREDIT" || internal || isSalary(t)) return false;
   if (textFields(t).some((text) => text != null && CASHBACK.test(text))) return false;
   if (accountType === "CREDIT") return true;
+  if (t.operationType === "ESTORNO" || (t.category != null && /^estorno$/i.test(t.category))) return true;
   return textFields(t).some((text) => text != null && REFUND.test(text));
 }
 
@@ -186,42 +189,69 @@ export interface EnrichContext {
   refundById?: ReadonlyMap<string, boolean>;
   /** Parcelas futuras de compra já estornada (Pluggy ainda envia como débito). */
   cancelledIds?: ReadonlySet<string>;
-}
-
-const INSTALLMENT_SUFFIX = /\s+\d+\s*\/\s*\d+\s*$/;
-const REFUND_CREDIT = /estorno|reembolso|devolu[cç][aã]o|refund|chargeback|cr[eé]dito de\s*["“]/i;
-
-/** Chave do plano parcelado: conta + data da compra + nº de parcelas + loja (sem "3/6"). */
-function installmentPlanKey(t: Transaction): string | null {
-  const meta = t.creditCardMetadata;
-  const total = meta?.totalInstallments ?? 0;
-  const purchase = meta?.purchaseDate?.slice(0, 10);
-  if (!purchase || total <= 1) return null;
-  const stem = t.description.replace(INSTALLMENT_SUFFIX, "").trim().toLowerCase();
-  return `${t.accountId}|${purchase}|${total}|${stem}`;
+  /** Estorno → compra original (ver `matchRefunds`); o estorno herda a tag e o nome da compra. */
+  refundMatches?: ReadonlyMap<string, RefundMatch>;
 }
 
 const sameMoney = (a: number, b: number): boolean => Math.abs(Math.abs(a) - Math.abs(b)) < 0.02;
 
-/**
- * Parcelas após um estorno que bate com a 1ª parcela do plano.
- * Nubank cancela o resto no app, mas a Pluggy segue mandando débitos PENDING.
- */
-export function cancelledInstallmentIds(transactions: readonly Transaction[]): Set<string> {
+function plansOf(transactions: readonly Transaction[]): Map<string, Transaction[]> {
   const byPlan = new Map<string, Transaction[]>();
   for (const t of transactions) {
     if (t.type !== "DEBIT") continue;
-    const key = installmentPlanKey(t);
+    const key = planKeyOf(t);
     if (!key) continue;
     const list = byPlan.get(key);
     if (list) list.push(t);
     else byPlan.set(key, [t]);
   }
+  return byPlan;
+}
 
-  const credits = transactions.filter(
-    (t) => t.type === "CREDIT" && REFUND_CREDIT.test(`${t.description} ${t.descriptionRaw ?? ""}`),
-  );
+/**
+ * Parcelas após um estorno que bate com a 1ª parcela do plano.
+ * Nubank cancela o resto no app, mas a Pluggy segue mandando débitos PENDING.
+ *
+ * Sem `matches`, vale só essa heurística (estorno de valor igual ao da 1ª parcela).
+ * Com `matches` (pareamento por conta/valor/loja/janela + decisões manuais):
+ * - estorno vinculado a um plano cancela o resto só quando cobre o total do plano (somando estornos
+ *   parciais); estorno parcial, inclusive de valor igual a uma parcela, só abate e não cancela nada;
+ * - estorno pendente ou desvinculado à mão nunca cancela.
+ */
+export function cancelledInstallmentIds(
+  transactions: readonly Transaction[],
+  matches?: ReadonlyMap<string, RefundMatch>,
+): Set<string> {
+  const byPlan = plansOf(transactions);
   const cancelled = new Set<string>();
+
+  if (matches) {
+    const refundedByPlan = new Map<string, { sum: number; lastDay: string; full: boolean }>();
+    for (const m of matches.values()) {
+      if (!m.purchase || m.plan.length === 0) continue;
+      const key = planKeyOf(m.purchase);
+      if (!key) continue;
+      const acc = refundedByPlan.get(key) ?? { sum: 0, lastDay: "", full: false };
+      acc.sum += Math.abs(m.refund.amount);
+      acc.full ||= m.full;
+      const day = m.refund.date.slice(0, 10);
+      if (day > acc.lastDay) acc.lastDay = day;
+      refundedByPlan.set(key, acc);
+    }
+    for (const [key, acc] of refundedByPlan) {
+      const members = byPlan.get(key) ?? [];
+      const first = [...members].sort(
+        (a, b) => (a.creditCardMetadata?.installmentNumber ?? 0) - (b.creditCardMetadata?.installmentNumber ?? 0),
+      )[0];
+      const total = first ? Math.abs(first.amount) * (first.creditCardMetadata?.totalInstallments ?? members.length) : 0;
+      const covers = acc.full || acc.sum >= total - 0.02 * Math.max(1, members.length);
+      if (!covers) continue;
+      for (const t of members) if (t.date.slice(0, 10) > acc.lastDay) cancelled.add(t.id);
+    }
+  }
+
+  // Heurística antiga (estorno de valor igual à 1ª parcela cancela o resto): só sem pareamento.
+  const credits = matches ? [] : transactions.filter(isRefundCredit);
 
   for (const installments of byPlan.values()) {
     const sorted = [...installments].sort(
@@ -276,16 +306,49 @@ function resolveTagId(
   return ctx.tagByKey.get(key) ?? null;
 }
 
+function refundLinkOf(match: RefundMatch, ctx: EnrichContext): RefundLink {
+  const { purchase, kind, refund } = match;
+  if (!purchase || !kind) {
+    return {
+      status: "pending",
+      kind: null,
+      purchaseId: null,
+      purchaseDate: null,
+      purchaseName: null,
+      partial: false,
+      unlinked: match.unlinked,
+    };
+  }
+  const { key, name } = counterparty(purchase, "out");
+  return {
+    status: "linked",
+    kind,
+    purchaseId: purchase.id,
+    purchaseDate: purchase.creditCardMetadata?.purchaseDate ?? purchase.date,
+    purchaseName: ctx.aliasByKey.get(key) ?? name,
+    partial: !match.full && Math.abs(refund.amount) < Math.abs(purchase.amount) - 0.02,
+    unlinked: false,
+  };
+}
+
 export function enrichTransaction(t: Transaction, ctx: EnrichContext): PeriodTransaction {
   const account = ctx.accounts.get(t.accountId);
   const direction = directionOf(t);
   const movement = movementOf(t, direction, account?.type ?? "BANK");
-  const { key, name } = counterparty(t, direction);
-  const alias = ctx.aliasByKey.get(key) ?? null;
+  const own = counterparty(t, direction);
   const amount = Math.abs(t.amount);
   const cancelled = ctx.cancelledIds?.has(t.id) === true;
   const internal = !cancelled && internalReason(t, ctx.connected) !== null;
   const refund = !cancelled && refundOf(t, account?.type ?? "BANK", internal, ctx.refundById);
+  const match = refund ? ctx.refundMatches?.get(t.id) : undefined;
+  const purchase = match?.purchase ?? null;
+  // Estorno vinculado herda a identidade e a tag da compra (menos o IOF, que tem texto próprio mais útil).
+  const inherit = purchase !== null && !isIofText(purchase) ? counterparty(purchase, "out") : null;
+  const { key, name } = inherit ?? own;
+  const alias = ctx.aliasByKey.get(key) ?? null;
+  const purchaseTag = purchase
+    ? resolveTagId(counterparty(purchase, "out").key, Math.abs(purchase.amount), [counterparty(purchase, "out").name, purchase.description], ctx)
+    : null;
   const prefix = cancelled ? "CANCELADA" : refund ? "ESTORNO" : MOVEMENT_PREFIX[movement];
   return {
     id: t.id,
@@ -301,9 +364,10 @@ export function enrichTransaction(t: Transaction, ctx: EnrichContext): PeriodTra
     counterpartyName: name,
     alias,
     displayName: `${prefix} - ${alias ?? name}`,
-    tagId: resolveTagId(key, amount, [name, alias ?? "", t.description], ctx),
+    tagId: purchaseTag ?? resolveTagId(key, amount, [name, alias ?? "", t.description], ctx),
     internal,
     refund,
+    refundLink: match ? refundLinkOf(match, ctx) : null,
     cancelled,
   };
 }

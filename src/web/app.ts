@@ -11,6 +11,7 @@ import {
   type InvestmentBalance,
   type PeriodResponse,
   type PeriodTransaction,
+  type RefundLink,
   type PeriodInvestmentIncome,
   type RecurringItem,
   type RecurringResponse,
@@ -172,7 +173,7 @@ const state: {
   recurring: null,
   wealth: null,
   card: null,
-  tags: { tags: [], rules: [], filters: [], aliases: [], recurring: [], matches: [], refundOverrides: [] },
+  tags: { tags: [], rules: [], filters: [], aliases: [], recurring: [], matches: [], refundOverrides: [], refundLinks: [], billOverrides: [], cardSettings: { projectInstallments: false, refundWindowDays: 60 } },
   tab: "summary",
 };
 
@@ -667,17 +668,171 @@ async function loadCard(refresh = false): Promise<void> {
   }
 }
 
-/** Diferença entre a soma das compras e o valor oficial da fatura (pagamento antecipado ou encargos). */
-function closedNote(total: number, closedAmount: number | null): string {
-  if (closedAmount === null) return "";
-  const delta = total - closedAmount;
-  if (Math.abs(delta) < 0.01) return `fechou em ${money(closedAmount)}`;
-  if (delta > 0) return `fechou em ${money(closedAmount)} (${money(delta)} pagos antes)`;
-  return `fechou em ${money(closedAmount)} (${money(-delta)} a mais que as compras)`;
+/** Valor com que a fatura fechou na Pluggy. A causa de qualquer diferença só aparece na conferência abaixo. */
+function closedNote(closedAmount: number | null): string {
+  return closedAmount === null ? "" : `fechou em ${money(closedAmount)}`;
+}
+
+/** Soma das transações × totalAmount; explica só o que fecha exatamente, o resto fica "sem explicação confirmada". */
+function reconciliationText(bill: CardBill | undefined): string {
+  const r = bill?.reconciliation;
+  if (!r) return "";
+  const head = `Transações ${money(r.transactionsTotal)} × fatura ${money(r.totalAmount)}`;
+  if (Math.abs(r.difference) < 0.02) return `${head}: confere.`;
+  const diff = `diferença de ${signedMoney(r.difference)}`;
+  const facts = [
+    r.financeCharges ? `encargos ${money(r.financeCharges)}` : "sem encargos informados",
+    r.payments.length ? `pagamentos: ${r.payments.map((p) => `${money(p.amount)} em ${formatIsoDate(p.date)}`).join(", ")}` : "sem pagamentos informados",
+  ].join("; ");
+  return r.explained
+    ? `${head}: ${diff}, explicada por ${r.explainedBy.map((e) => `${e.label} (${signedMoney(e.amount)})`).join(" + ")}.`
+    : `${head}: ${diff} sem explicação confirmada (${facts}).`;
 }
 
 const billDue = (bill: Pick<CardBill, "dueDate" | "estimated">): string =>
   bill.dueDate ? `${bill.estimated ? "vence por volta de" : "vence em"} ${formatIsoDate(bill.dueDate)}` : "";
+
+function renderNextBill(data: CardResponse): void {
+  const { next, cards } = data;
+  el("card-next-total").textContent = next ? money(next.total) : "—";
+  el("card-next-due").textContent = next
+    ? [monthLabel(next.month), "valor parcial/estimado da API", billDue(next)].filter(Boolean).join(" · ")
+    : "";
+  el("card-next-source").textContent = next
+    ? next.forecastCount
+      ? `${next.forecastCount} lançamentos agrupados pela fatura prevista da Pluggy; os demais, pelo ciclo estimado do cartão.`
+      : "Agrupado pelo ciclo estimado do cartão."
+    : "";
+  el("card-next-projected").textContent =
+    next && data.settings.projectInstallments
+      ? next.projected.length
+        ? `+ ${money(next.projectedTotal)} estimados de ${next.projected.length} parcelas que a API ainda não mandou (${next.projected.map((p) => `${p.description} ${p.installment}`).join(", ")}). Total estimado: ${money(next.total + next.projectedTotal)}.`
+        : "Nenhuma parcela ausente a projetar."
+      : "";
+  const form = el("card-override-form", HTMLFormElement);
+  form.hidden = !next || !cards.length;
+  const input = el("card-override-input", HTMLInputElement);
+  const current = next?.overrides[0]?.amount ?? null;
+  input.value = current === null ? "" : String(current);
+  el("card-override-clear").hidden = current === null;
+  el("card-override-diff").textContent =
+    next && next.bankAmount !== null && next.difference !== null
+      ? `Banco ${money(next.bankAmount)} − API ${money(next.total)} = ${signedMoney(next.difference)}` +
+        (next.differenceWithProjection !== null ? ` (${signedMoney(next.differenceWithProjection)} contando a projeção)` : "")
+      : "";
+}
+
+function renderCardOptions(data: CardResponse): void {
+  el("card-opt-project", HTMLInputElement).checked = data.settings.projectInstallments;
+  el("card-opt-window", HTMLInputElement).value = String(data.settings.refundWindowDays);
+}
+
+async function saveCardOption(body: ApiRoutes["POST /api/card/settings"]["body"]): Promise<void> {
+  appError.textContent = "";
+  try {
+    await api("POST /api/card/settings", body);
+    await loadPeriod();
+  } catch (err) {
+    appError.textContent = errorMessage(err);
+  }
+}
+
+el("card-opt-project", HTMLInputElement).addEventListener("change", (e) => {
+  void saveCardOption({ projectInstallments: (e.target as HTMLInputElement).checked });
+});
+el("card-opt-window", HTMLInputElement).addEventListener("change", (e) => {
+  void saveCardOption({ refundWindowDays: Number((e.target as HTMLInputElement).value) });
+});
+
+async function saveBillOverride(amount: number | null): Promise<void> {
+  const next = state.card?.next;
+  const accountId = state.card?.cards[0]?.id;
+  if (!next || !accountId) return;
+  appError.textContent = "";
+  try {
+    await api("POST /api/card/bill-override", { accountId, month: next.month, amount });
+    state.card = null;
+    await loadCard();
+  } catch (err) {
+    appError.textContent = errorMessage(err);
+  }
+}
+
+el("card-override-form", HTMLFormElement).addEventListener("submit", (e) => {
+  e.preventDefault();
+  const raw = el("card-override-input", HTMLInputElement).value;
+  void saveBillOverride(raw === "" ? null : Number(raw));
+});
+el("card-override-clear").addEventListener("click", () => void saveBillOverride(null));
+
+// Estornos: "estorno de X em dd/mm" e vínculo manual
+
+const refundDialog = el("refund-link-dialog", HTMLDialogElement);
+const refundSelect = el("refund-link-select", HTMLSelectElement);
+const refundLinkError = el("refund-link-error");
+let refundDialogTarget: string | null = null;
+
+async function setRefundLink(refundId: string, purchaseId: string | null | undefined): Promise<void> {
+  appError.textContent = "";
+  try {
+    await api("POST /api/refunds/link", { refundId, purchaseId });
+    await loadPeriod();
+  } catch (err) {
+    appError.textContent = errorMessage(err);
+  }
+}
+
+async function openRefundLinkDialog(refundId: string): Promise<void> {
+  refundLinkError.textContent = "";
+  try {
+    const card = state.card ?? (await api("POST /api/card", { ...state.range }));
+    state.card = card;
+    refundDialogTarget = refundId;
+    el("refund-link-hint").textContent = "Escolha a compra que foi estornada (as 300 compras mais recentes do cartão).";
+    refundSelect.replaceChildren(
+      ...card.linkable.map((p) => {
+        const option = document.createElement("option");
+        option.value = p.id;
+        option.textContent = `${date(p.date)} · ${p.counterpartyName}${p.installment ? ` ${p.installment}` : ""} · ${money(p.amount)}`;
+        return option;
+      }),
+    );
+    refundDialog.showModal();
+  } catch (err) {
+    appError.textContent = errorMessage(err);
+  }
+}
+
+el("refund-link-form", HTMLFormElement).addEventListener("submit", (e) => {
+  e.preventDefault();
+  const id = refundDialogTarget;
+  if (!id || !refundSelect.value) return;
+  refundDialog.close();
+  void setRefundLink(id, refundSelect.value);
+});
+el("cancel-refund-link-btn").addEventListener("click", () => refundDialog.close());
+
+function linkButton(label: string, onClick: () => void): HTMLButtonElement {
+  const button = h("button", { className: "btn btn-ghost btn-sm", text: label });
+  button.type = "button";
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+/** Linha de apoio do estorno: com quem foi pareado (ou pendente) e as ações de vincular/desvincular. */
+function refundNote(refundId: string, link: RefundLink): HTMLElement {
+  const text =
+    link.status === "linked"
+      ? `estorno de ${link.purchaseName ?? "compra"}${link.purchaseDate ? ` em ${date(link.purchaseDate).slice(0, 5)}` : ""}` +
+        `${link.partial ? " (parcial)" : ""}${link.kind === "manual" ? " · vínculo manual" : ""}`
+      : link.unlinked
+        ? "desvinculado (sem compra de origem)"
+        : "pendente de vínculo";
+  const actions: HTMLElement[] = [linkButton(link.status === "linked" ? "Trocar" : "Vincular", () => void openRefundLinkDialog(refundId))];
+  if (link.status === "linked") actions.push(linkButton("Desvincular", () => void setRefundLink(refundId, null)));
+  if (link.kind === "manual" || link.unlinked) actions.push(linkButton("Voltar ao automático", () => void setRefundLink(refundId, undefined)));
+  return h("span", { className: `subtext${link.status === "pending" ? " is-negative" : ""}` }, document.createTextNode(`${text} `), ...actions);
+}
 
 function renderCard(data: CardResponse): void {
   const { selected, next, cards, budget } = data;
@@ -688,13 +843,14 @@ function renderCard(data: CardResponse): void {
   el("card-selected-total").textContent = money(selected.total);
   el("card-selected-due").textContent = [
     selected.estimated ? "prevista" : "fechada",
-    closedNote(selected.total, selected.closedAmount),
+    closedNote(selected.closedAmount),
     billDue({ dueDate: selected.dueDate, estimated: selected.estimated }),
   ]
     .filter(Boolean)
     .join(" · ");
-  el("card-next-total").textContent = next ? money(next.total) : "—";
-  el("card-next-due").textContent = next ? [monthLabel(next.month), billDue(next)].filter(Boolean).join(" · ") : "";
+  el("card-selected-recon").textContent = single ? reconciliationText(data.bills.find((b) => b.month === single)) : "";
+  renderNextBill(data);
+  renderCardOptions(data);
 
   const limits = cards.filter((c) => c.availableCreditLimit !== null);
   const available = limits.reduce((acc, c) => acc + (c.availableCreditLimit ?? 0), 0);
@@ -784,6 +940,7 @@ function renderCard(data: CardResponse): void {
   const rows = selected.purchases.map((p) => {
     const name = h("td", {}, h("span", { text: p.displayName }));
     if (p.installment) name.append(h("span", { className: "subtext", text: `Parcela ${p.installment}` }));
+    if (p.refundLink) name.append(refundNote(p.id, p.refundLink));
     const row = h(
       "tr",
       {},
@@ -837,7 +994,7 @@ function renderCardChart(bills: readonly CardBill[], selected: ReadonlySet<strin
         "title",
         {},
         document.createTextNode(
-          [`${monthLabel(b.month)}: ${money(b.total)}`, b.estimated ? "prevista" : closedNote(b.total, b.closedAmount)]
+          [`${monthLabel(b.month)}: ${money(b.total)}`, b.estimated ? "parcial/estimada" : closedNote(b.closedAmount)]
             .filter(Boolean)
             .join(" · "),
         ),
@@ -1188,7 +1345,9 @@ function descriptionCell(t: PeriodTransaction): HTMLTableCellElement {
   reveal.innerHTML = EYE_ICON;
   const details = h("span", { className: "subtext", text: original });
   details.hidden = true;
-  return h("td", {}, h("div", { className: "cell-name" }, h("span", { text: t.displayName }), reveal), details);
+  const cell = h("td", {}, h("div", { className: "cell-name" }, h("span", { text: t.displayName }), reveal), details);
+  if (t.refundLink) cell.append(refundNote(t.id, t.refundLink));
+  return cell;
 }
 
 document.addEventListener("click", (e) => {

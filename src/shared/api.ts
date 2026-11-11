@@ -117,6 +117,47 @@ export interface SetRefundRequest {
   refund: boolean | null;
 }
 
+/** Vínculo manual estorno → compra. `purchaseId: null` = "não é estorno de nenhuma compra" (desvincula o automático). */
+export interface RefundLinkOverride {
+  refundId: string;
+  purchaseId: string | null;
+}
+
+export interface SetRefundLinkRequest {
+  refundId: string;
+  /** `undefined`/ausente volta ao pareamento automático. */
+  purchaseId?: string | null | undefined;
+}
+
+/** Valor real da fatura informado pelo usuário (o que o banco mostra), por cartão e mês de vencimento. */
+export interface BillOverride {
+  accountId: string;
+  /** yyyy-mm do vencimento. */
+  month: string;
+  amount: number;
+}
+
+/** `amount: null` remove o valor informado. */
+export interface SetBillOverrideRequest {
+  accountId: string;
+  month: string;
+  amount: number | null;
+}
+
+export interface CardSettings {
+  /** Projetar parcelas que a API ainda não mandou (estimativa, separada do valor da API). */
+  projectInstallments: boolean;
+  /** Dias máximos entre a compra e o estorno para o pareamento automático. */
+  refundWindowDays: number;
+}
+
+export const DEFAULT_CARD_SETTINGS: CardSettings = { projectInstallments: false, refundWindowDays: 60 };
+
+export interface SetCardSettingsRequest {
+  projectInstallments?: boolean | undefined;
+  refundWindowDays?: number | undefined;
+}
+
 export interface TagsResponse {
   tags: Tag[];
   rules: TagRule[];
@@ -125,6 +166,9 @@ export interface TagsResponse {
   recurring: RecurringBill[];
   matches: RecurringMatch[];
   refundOverrides: RefundOverride[];
+  refundLinks: RefundLinkOverride[];
+  billOverrides: BillOverride[];
+  cardSettings: CardSettings;
 }
 
 /** `alias: null` remove a descrição personalizada. */
@@ -215,11 +259,28 @@ export interface PeriodTransaction {
   internal: boolean;
   /** Estorno/reembolso: abate o gasto (não conta como renda). Cashback não é estorno. */
   refund: boolean;
+  /** Para estornos: com qual compra foi pareado (ou "pendente de vínculo"). `null` fora de estornos. */
+  refundLink: RefundLink | null;
   /**
    * Parcela futura de uma compra que já teve estorno na Pluggy/banco.
    * Fora dos totais (a Pluggy ainda manda a parcela como débito PENDING).
    */
   cancelled: boolean;
+}
+
+export interface RefundLink {
+  /** `pending` = sem par único; o usuário pode vincular à mão. */
+  status: "linked" | "pending";
+  /** `exact`: valor igual; `partial`: valor menor, com a loja no texto; `manual`: escolhido pelo usuário. */
+  kind: "exact" | "partial" | "manual" | null;
+  purchaseId: string | null;
+  /** Data (ISO) e nome da compra original, para "estorno de X em dd/mm". */
+  purchaseDate: string | null;
+  purchaseName: string | null;
+  /** O estorno cobre só parte da compra. */
+  partial: boolean;
+  /** O usuário desvinculou à mão: o pareamento automático fica desligado para este estorno. */
+  unlinked: boolean;
 }
 
 export interface AccountBalance {
@@ -300,12 +361,52 @@ export interface CardInfo {
 export interface CardBill {
   /** yyyy-mm do vencimento. */
   month: string;
-  /** Total gasto no ciclo (compras menos estornos); pagamentos antecipados não abatem. */
+  /** Soma das transações da API na fatura (compras menos estornos). Não inclui parcelas projetadas. */
   total: number;
-  /** Valor com que a fatura fechou na Pluggy, já descontados os pagamentos antecipados; `null` se ainda aberta. */
+  /** `totalAmount` da fatura fechada na Pluggy; `null` se ainda aberta. */
   closedAmount: number | null;
   dueDate: string | null;
+  /** Fatura ainda aberta: o valor é parcial/estimado (a API só manda parte das parcelas até o fechamento). */
   estimated: boolean;
+  /** Valor real informado pelo usuário (soma dos cartões; cartões sem valor informado entram com o total da API). */
+  bankAmount: number | null;
+  /** `bankAmount − total` (valor do banco menos o da API). */
+  difference: number | null;
+  /** Valores informados por cartão, para a UI editar. */
+  overrides: { accountId: string; amount: number }[];
+  /** Quantas transações vieram agrupadas por `billForecastDate` (as demais, pelo ciclo estimado do cartão). */
+  forecastCount: number;
+  /** Parcelas projetadas (só com a opção ligada). É estimativa e NÃO entra em `total`. */
+  projected: ProjectedInstallment[];
+  projectedTotal: number;
+  /** `bankAmount − (total + projectedTotal)`; só com projeção ligada e valor do banco informado. */
+  differenceWithProjection: number | null;
+  /** Conferência da fatura fechada; `null` se ainda aberta ou sem fatura da Pluggy. */
+  reconciliation: BillReconciliation | null;
+}
+
+export interface ProjectedInstallment {
+  accountId: string;
+  description: string;
+  /** "3/10": a parcela projetada. */
+  installment: string;
+  amount: number;
+}
+
+/** Soma das transações da fatura × `totalAmount`, explicando a diferença só quando a conta fecha. */
+export interface BillReconciliation {
+  /** Compras − estornos com o `billId` da fatura (sem os "Pagamento recebido"). */
+  transactionsTotal: number;
+  totalAmount: number;
+  /** `totalAmount − transactionsTotal`. */
+  difference: number;
+  financeCharges: number;
+  /** Pagamentos da fatura (`payments[]`), só informativo. */
+  payments: { date: string; amount: number; kind: string | null }[];
+  /** Combinação de itens cuja soma fecha a diferença (±0,02); vazio se nenhuma fecha. */
+  explainedBy: { label: string; amount: number }[];
+  /** `true` quando `explainedBy` fecha a diferença (ou a diferença é zero). */
+  explained: boolean;
 }
 
 export interface CardPurchase {
@@ -320,6 +421,7 @@ export interface CardPurchase {
   cardName: string;
   /** "3/10" em compras parceladas. */
   installment: string | null;
+  refundLink: RefundLink | null;
 }
 
 export interface CardSpender {
@@ -347,8 +449,11 @@ export interface CardResponse {
     topSpenders: CardSpender[];
     byTag: TagTotal[];
   };
-  /** Próxima fatura (ainda aberta), estimada pelas compras já lançadas. */
+  /** Próxima fatura (ainda aberta), parcial/estimada pelas compras já lançadas. */
   next: CardBill | null;
+  settings: CardSettings;
+  /** Compras recentes do cartão (as 300 mais novas) para vincular um estorno à mão. */
+  linkable: CardPurchase[];
   /**
    * Teto para a fatura: salário do período − gasto fixo das recorrentes.
    * Sem salário detectado, `room` fica `null`.
@@ -616,6 +721,9 @@ export interface ApiRoutes {
   "POST /api/wealth/manual": { body: SetWealthManualRequest; response: WealthResponse };
   "POST /api/yield/override": { body: SetYieldOverrideRequest; response: OkResponse };
   "POST /api/card": { body: PeriodRequest; response: CardResponse };
+  "POST /api/card/settings": { body: SetCardSettingsRequest; response: OkResponse };
+  "POST /api/card/bill-override": { body: SetBillOverrideRequest; response: OkResponse };
+  "POST /api/refunds/link": { body: SetRefundLinkRequest; response: OkResponse };
   "POST /api/tags/create": { body: CreateTagRequest; response: Tag };
   "POST /api/tags/update": { body: UpdateTagRequest; response: Tag };
   "POST /api/tags/delete": { body: DeleteTagRequest; response: OkResponse };

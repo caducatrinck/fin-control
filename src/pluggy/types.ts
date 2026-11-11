@@ -82,6 +82,26 @@ export interface Bill {
   totalAmount: number;
   totalAmountCurrencyCode: string;
   minimumPaymentAmount?: number | null;
+  /** Fechamento real da fatura (o `balanceCloseDate` do cartão pode vir nulo). */
+  billClosingDate?: string | null;
+  financeCharges?: BillFinanceCharge[] | null;
+  payments?: BillPayment[] | null;
+}
+
+export interface BillFinanceCharge {
+  type?: string | null;
+  additionalInfo?: string | null;
+  amount?: number | null;
+  currencyCode?: string | null;
+}
+
+export interface BillPayment {
+  id?: string;
+  valueType?: string | null;
+  paymentDate: string;
+  paymentMode?: string | null;
+  amount: number;
+  currencyCode?: string | null;
 }
 
 export interface CreditCardMetadata {
@@ -89,6 +109,11 @@ export interface CreditCardMetadata {
   installmentNumber?: number | null;
   totalInstallments?: number | null;
   purchaseDate?: string | null;
+  /** yyyy-mm da fatura (mês de vencimento) em que a Pluggy prevê lançar a transação ainda sem `billId`. */
+  billForecastDate?: string | null;
+  billPostDate?: string | null;
+  transactionDateTime?: string | null;
+  paymentType?: string | null;
 }
 
 export type InvestmentType = "FIXED_INCOME" | "EQUITY" | "MUTUAL_FUND" | "SECURITY" | "ETF" | "COE";
@@ -165,6 +190,8 @@ export interface Transaction {
   type: TransactionType;
   /** Presente em cartões Nubank/Pluggy; parcelas futuras de compra estornada costumam ficar PENDING. */
   status?: TransactionStatus | null;
+  /** PAGAMENTO, ESTORNO, PAGAMENTO_FATURA, TARIFA, OPERACOES_CREDITO_CONTRATADAS_CARTAO (cartões). */
+  operationType?: string | null;
   category: string | null;
   categoryId?: string | null;
   paymentData?: PaymentData | null;

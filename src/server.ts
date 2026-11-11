@@ -18,6 +18,7 @@ import {
   normalizeDescription,
   tagIndex,
 } from "./transactions.ts";
+import { matchRefunds } from "./refunds.ts";
 import { buildRecurring, historyStart } from "./recurring.ts";
 import { buildInvestmentIncome, applyYieldOverrides, buildWealth, wealthStart } from "./wealth.ts";
 import { listInvestmentSnapshots, recordInvestmentSnapshot } from "./snapshots.ts";
@@ -44,6 +45,10 @@ import type {
   SetExpectedRequest,
   SetRecurringRequest,
   SetRefundRequest,
+  SetRefundLinkRequest,
+  SetBillOverrideRequest,
+  SetCardSettingsRequest,
+  CardSettings,
   SetRuleRequest,
   SetWealthManualRequest,
   SetYieldOverrideRequest,
@@ -101,8 +106,8 @@ interface RawPeriod {
   item: Item;
   accounts: Account[];
   transactions: Transaction[];
-  /** Parcelas canceladas detectadas com histórico de cartão (pode incluir ids fora do período). */
-  cancelledIds?: Set<string>;
+  /** Histórico completo (cartão com meses a mais): estornos podem ser de compras de períodos anteriores. */
+  history?: Transaction[];
 }
 
 const periodCache = new Map<string, RawPeriod>();
@@ -291,8 +296,7 @@ async function fetchPeriod(itemId: string, from: string, to: string, refresh: bo
     }),
   );
   const all = perAccount.flat();
-  const cancelled = cancelledInstallmentIds(all);
-  // Guarda só o período pedido; ids cancelados vêm do histórico completo.
+  // Guarda só o período pedido; o pareamento de estornos e o cancelamento de parcelas usam o histórico completo.
   const inRange = all.filter((t) => {
     const day = t.date.slice(0, 10);
     return day >= from && day <= to;
@@ -302,7 +306,7 @@ async function fetchPeriod(itemId: string, from: string, to: string, refresh: bo
     item,
     accounts: accounts.results,
     transactions: inRange,
-    cancelledIds: cancelled,
+    history: all,
   };
   periodCache.set(key, raw);
   return raw;
@@ -318,8 +322,16 @@ function requireItemId(): string {
 }
 
 /** Aplica tags, descrições e classificação às transações brutas, da mais recente para a mais antiga. */
-function enrichAll(raw: RawPeriod, { rules, filters, aliases, refundOverrides }: TagsResponse): PeriodTransaction[] {
-  const cancelledIds = raw.cancelledIds ?? cancelledInstallmentIds(raw.transactions);
+function enrichAll(
+  raw: RawPeriod,
+  { rules, filters, aliases, refundOverrides, refundLinks, cardSettings }: TagsResponse,
+): PeriodTransaction[] {
+  const history = raw.history ?? raw.transactions;
+  const refundMatches = matchRefunds(history, {
+    windowDays: cardSettings.refundWindowDays,
+    manual: new Map(refundLinks.map((l) => [l.refundId, l.purchaseId])),
+  });
+  const cancelledIds = cancelledInstallmentIds(history, refundMatches);
   const ctx = {
     accounts: new Map(raw.accounts.map((a) => [a.id, a])),
     tagByKey: tagIndex(rules),
@@ -328,6 +340,7 @@ function enrichAll(raw: RawPeriod, { rules, filters, aliases, refundOverrides }:
     connected: connectedAccountKeys(raw.accounts),
     refundById: new Map(refundOverrides.map((r) => [r.id, r.refund])),
     cancelledIds,
+    refundMatches,
   };
   return raw.transactions.map((t) => enrichTransaction(t, ctx)).sort((a, b) => b.date.localeCompare(a.date));
 }
@@ -472,6 +485,40 @@ function parseSetRefund(body: unknown): SetRefundRequest {
   if (!id) throw new HttpError(400, "Transação inválida.");
   if (refund !== null && typeof refund !== "boolean") throw new HttpError(400, "Informe se é reembolso.");
   return { id, refund };
+}
+
+function parseSetRefundLink(body: unknown): SetRefundLinkRequest {
+  const refundId = stringField(body, "refundId");
+  if (!refundId) throw new HttpError(400, "Estorno inválido.");
+  const purchaseId = isRecord(body) ? body.purchaseId : undefined;
+  if (purchaseId !== undefined && purchaseId !== null && (typeof purchaseId !== "string" || !purchaseId)) {
+    throw new HttpError(400, "Compra inválida.");
+  }
+  return { refundId, purchaseId };
+}
+
+function parseSetBillOverride(body: unknown): SetBillOverrideRequest {
+  const accountId = stringField(body, "accountId");
+  const month = stringField(body, "month");
+  const amount = isRecord(body) ? body.amount : undefined;
+  if (!accountId || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new HttpError(400, "Cartão ou mês inválido.");
+  if (amount !== null && (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0)) {
+    throw new HttpError(400, "Informe um valor válido para a fatura.");
+  }
+  return { accountId, month, amount };
+}
+
+function parseSetCardSettings(body: unknown): SetCardSettingsRequest {
+  const project = isRecord(body) ? body.projectInstallments : undefined;
+  const window = isRecord(body) ? body.refundWindowDays : undefined;
+  if (project !== undefined && typeof project !== "boolean") throw new HttpError(400, "Opção inválida.");
+  if (
+    window !== undefined &&
+    (typeof window !== "number" || !Number.isInteger(window) || window < 1 || window > store.MAX_REFUND_WINDOW_DAYS)
+  ) {
+    throw new HttpError(400, `A janela deve ter entre 1 e ${store.MAX_REFUND_WINDOW_DAYS} dias.`);
+  }
+  return { projectInstallments: project, refundWindowDays: window };
 }
 
 function parseSetRecurring(body: unknown): SetRecurringRequest {
@@ -751,6 +798,8 @@ const routes: Handlers = {
       range: { from, to },
       today,
       fixedMonthly: recurring.totals.expected,
+      settings: data.cardSettings,
+      billOverrides: data.billOverrides,
     });
   },
 
@@ -802,6 +851,27 @@ const routes: Handlers = {
   "POST /api/refunds/set": async (body) => {
     const { id, refund } = parseSetRefund(body);
     await store.setRefund(id, refund);
+    return { ok: true };
+  },
+
+  "POST /api/refunds/link": async (body) => {
+    const { refundId, purchaseId } = parseSetRefundLink(body);
+    await store.setRefundLink(refundId, purchaseId);
+    return { ok: true };
+  },
+
+  "POST /api/card/settings": async (body) => {
+    const { projectInstallments, refundWindowDays } = parseSetCardSettings(body);
+    const patch: Partial<CardSettings> = {};
+    if (projectInstallments !== undefined) patch.projectInstallments = projectInstallments;
+    if (refundWindowDays !== undefined) patch.refundWindowDays = refundWindowDays;
+    await store.setCardSettings(patch);
+    return { ok: true };
+  },
+
+  "POST /api/card/bill-override": async (body) => {
+    const { accountId, month, amount } = parseSetBillOverride(body);
+    await store.setBillOverride(accountId, month, amount);
     return { ok: true };
   },
 
