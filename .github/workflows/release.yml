@@ -16,8 +16,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -31,8 +31,8 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -41,18 +41,9 @@ jobs:
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
       - run: npm ci
       - name: Smoke test (servidor no Node do Electron)
-        shell: bash
         env:
           ELECTRON_RUN_AS_NODE: "1"
-          PORT: "18999"
-          FIN_CONTROL_ROOT: ${{ runner.temp }}
-        run: |
-          node_modules/electron/dist/electron.exe src/server.ts --no-open &
-          for i in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:18999/api/status; then kill $! || true; exit 0; fi
-            sleep 1
-          done
-          echo "Servidor não subiu no Electron"; exit 1
+        run: node_modules\electron\dist\electron.exe scripts\smoke.ts
       - run: npx electron-builder --win portable --publish never
       - uses: actions/upload-artifact@v4
         with:
@@ -69,7 +60,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ needs.build-windows.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
         with:
           name: fin-control-${{ needs.build-windows.outputs.version }}-win-x64
