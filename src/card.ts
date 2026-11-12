@@ -1,5 +1,5 @@
 import type { Account, Bill, Transaction } from "./pluggy/types.ts";
-import { planKeyOf } from "./refunds.ts";
+import { planFamilyOf, planKeyOf } from "./refunds.ts";
 import {
   DEFAULT_CARD_SETTINGS,
   type BillOverride,
@@ -252,37 +252,52 @@ export function buildCard(input: CardInput): CardResponse {
   const settings = input.settings ?? DEFAULT_CARD_SETTINGS;
   const overrides = input.billOverrides ?? [];
 
-  // Planos conhecidos (todos os números de parcela vistos), para não projetar o que a API já tem ou cancelou.
-  const knownNumbers = new Map<string, Set<number>>();
+  // Quantas parcelas de cada número a API já mandou, por família de plano (sem a data da compra, que às vezes
+  // muda entre parcelas do mesmo plano). Assim não projetamos o que a API já tem ou cancelou.
+  const knownCount = new Map<string, number>();
   for (const t of raw) {
-    const key = t.type === "DEBIT" ? planKeyOf(t) : null;
-    if (!key) continue;
-    const numbers = knownNumbers.get(key) ?? new Set<number>();
-    numbers.add(t.creditCardMetadata?.installmentNumber ?? 0);
-    knownNumbers.set(key, numbers);
+    const family = t.type === "DEBIT" ? planFamilyOf(t) : null;
+    if (!family) continue;
+    const key = `${family}|${t.creditCardMetadata?.installmentNumber ?? 0}`;
+    knownCount.set(key, (knownCount.get(key) ?? 0) + 1);
   }
   /** Próxima parcela de planos com n < total na fatura anterior que ainda não existe na API. É estimativa. */
   const projectionFor = (month: string): ProjectedInstallment[] => {
-    const latest = new Map<string, { source: Transaction; accountId: string }>();
+    // Última parcela de cada plano na fatura anterior; planos idênticos (mesma chave) contam uma vez cada.
+    const latest = new Map<string, { source: Transaction; accountId: string; copies: number }>();
     for (const p of purchases) {
       if (p.dueMonth !== addMonths(month, -1) || !p.source || p.source.type !== "DEBIT") continue;
       const key = planKeyOf(p.source);
       if (!key) continue;
       const n = p.source.creditCardMetadata?.installmentNumber ?? 0;
       const prev = latest.get(key);
-      if (!prev || n > (prev.source.creditCardMetadata?.installmentNumber ?? 0)) latest.set(key, { source: p.source, accountId: p.accountId });
+      const prevN = prev?.source.creditCardMetadata?.installmentNumber ?? 0;
+      if (!prev || n > prevN) latest.set(key, { source: p.source, accountId: p.accountId, copies: 1 });
+      else if (n === prevN) prev.copies += 1;
+    }
+    // Quantas parcelas n+1 cada família ainda "deve" (pedidas pelos planos acima menos as que a API já tem).
+    const missing = new Map<string, number>();
+    for (const { source, copies } of latest.values()) {
+      const key = `${planFamilyOf(source)}|${(source.creditCardMetadata?.installmentNumber ?? 0) + 1}`;
+      missing.set(key, (missing.get(key) ?? -(knownCount.get(key) ?? 0)) + copies);
     }
     const out: ProjectedInstallment[] = [];
-    for (const [key, { source, accountId }] of latest) {
+    for (const { source, accountId, copies } of latest.values()) {
       const n = source.creditCardMetadata?.installmentNumber ?? 0;
       const total = source.creditCardMetadata?.totalInstallments ?? 0;
-      if (n < 1 || n >= total || knownNumbers.get(key)?.has(n + 1)) continue;
-      out.push({
-        accountId,
-        description: source.description.replace(/\s+\d+\s*\/\s*\d+\s*$/, "").trim(),
-        installment: `${n + 1}/${total}`,
-        amount: round(Math.abs(source.amount)),
-      });
+      if (n < 1 || n >= total) continue;
+      const key = `${planFamilyOf(source)}|${n + 1}`;
+      const owed = Math.min(copies, missing.get(key) ?? 0);
+      if (owed <= 0) continue;
+      missing.set(key, (missing.get(key) ?? 0) - owed);
+      for (let i = 0; i < owed; i++) {
+        out.push({
+          accountId,
+          description: source.description.replace(/\s+\d+\s*\/\s*\d+\s*$/, "").trim(),
+          installment: `${n + 1}/${total}`,
+          amount: round(Math.abs(source.amount)),
+        });
+      }
     }
     return out.sort((a, b) => b.amount - a.amount);
   };

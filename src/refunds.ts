@@ -99,6 +99,17 @@ function storeMatches(store: string, purchase: Transaction): boolean {
 }
 
 /** Plano parcelado: conta + instante da compra + nº de parcelas + loja (compras idênticas têm horário distinto). */
+/**
+ * Plano sem a data da compra: a Pluggy às vezes manda parcelas do mesmo plano com `purchaseDate` diferente
+ * (ex.: Zupper 1/2 com 12/10 e 2/2 com 12/11). Serve para saber se uma parcela já existe; não identifica um
+ * plano sozinho (planos iguais da mesma loja caem na mesma família).
+ */
+export function planFamilyOf(t: Transaction): string | null {
+  const total = t.creditCardMetadata?.totalInstallments ?? 0;
+  if (total <= 1) return null;
+  return `${t.accountId}|${total}|${t.description.replace(INSTALLMENT_SUFFIX, "").trim().toLowerCase()}`;
+}
+
 export function planKeyOf(t: Transaction): string | null {
   const meta = t.creditCardMetadata;
   const total = meta?.totalInstallments ?? 0;

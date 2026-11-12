@@ -14,6 +14,22 @@ import type {
 
 const BASE_URL = "https://api.pluggy.ai";
 
+/**
+ * Compra internacional vem com `amount` na moeda da compra (ex.: US$ 7,50) e o valor cobrado na conta em
+ * `amountInAccountCurrency` (R$ 39,03). O app inteiro soma `amount`, então trocamos aqui e guardamos o original.
+ */
+export function toAccountCurrency(t: Transaction): Transaction {
+  const converted = t.amountInAccountCurrency;
+  if (typeof converted !== "number" || !Number.isFinite(converted)) return t;
+  const sign = t.amount < 0 || (t.amount === 0 && converted < 0) ? -1 : 1;
+  return {
+    ...t,
+    amount: sign * Math.abs(converted),
+    originalAmount: t.amount,
+    originalCurrencyCode: t.currencyCode,
+  };
+}
+
 function isApiKeyError(status: number, data: unknown): boolean {
   if (status !== 401 && status !== 403) return false;
   if (!data || typeof data !== "object") return true;
@@ -147,7 +163,7 @@ export class PluggyClient {
     while (query && !seen.has(query)) {
       seen.add(query);
       const page: CursorPageResponse<Transaction> = await this.#request(`/v2/transactions${query}`);
-      all.push(...page.results);
+      all.push(...page.results.map(toAccountCurrency));
       query = page.next?.startsWith("http") ? new URL(page.next).search : page.next;
     }
     return all;

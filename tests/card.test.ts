@@ -337,6 +337,43 @@ describe("projeção de parcelas ausentes", () => {
     assert.equal(next?.differenceWithProjection, 4.37);
   });
 
+  it("não projeta a parcela que a API já mandou com outra data de compra (Zupper 1/2 em 12/10, 2/2 em 12/11)", () => {
+    const zupper = [
+      ...base,
+      nov(1, 2, 371.97, "Zupper", "2026-10-12T21:57:06.001Z"),
+      cardTx("zupper-2", "DEBIT", 371.97, "2026-11-12", "Zupper 2/2", {
+        billForecastDate: "2026-12",
+        installmentNumber: 2,
+        totalInstallments: 2,
+        purchaseDate: "2026-11-12T00:00:00.001Z",
+      }),
+    ];
+    const next = build(zupper, { settings: { projectInstallments: true, refundWindowDays: 60 } }).next;
+    assert.equal(next?.total, 50 + 371.97);
+    assert.deepEqual(
+      next?.projected.map((p) => `${p.description} ${p.installment}`),
+      ["Mercado Livre 2/10"],
+    );
+  });
+
+  it("projeta uma parcela para cada plano idêntico, descontando as que a API já mandou", () => {
+    const ali = (id: string) => ({ ...nov(2, 4, 176.95, "Aliexpress", "2026-09-01T10:00:00.000Z"), id });
+    const third = (id: string) =>
+      cardTx(id, "DEBIT", 176.95, "2026-11-01", "Aliexpress 3/4", {
+        billForecastDate: "2026-12",
+        installmentNumber: 3,
+        totalInstallments: 4,
+        purchaseDate: "2026-09-01T10:00:00.000Z",
+      });
+    const settings = { projectInstallments: true, refundWindowDays: 60 };
+    const none = build([ali("a1"), ali("a2")], { settings }).next;
+    assert.deepEqual(none?.projected.map((p) => p.installment), ["3/4", "3/4"]);
+    const one = build([ali("a1"), ali("a2"), third("a3-1")], { settings }).next;
+    assert.deepEqual(one?.projected.map((p) => p.installment), ["3/4"]);
+    const both = build([ali("a1"), ali("a2"), third("a3-1"), third("a3-2")], { settings }).next;
+    assert.deepEqual(both?.projected, []);
+  });
+
   it("não projeta faturas já fechadas", () => {
     const result = build(base, { settings: { projectInstallments: true, refundWindowDays: 60 } });
     assert.deepEqual(result.bills.find((b) => b.month === "2026-11")?.projected, []);

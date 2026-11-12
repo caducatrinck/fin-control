@@ -187,6 +187,11 @@ export interface Transaction {
   /** Valor com sinal; use `type` para saber se é entrada ou saída. */
   amount: number;
   currencyCode: string;
+  /** Valor convertido para a moeda da conta (compras internacionais: `amount` vem na moeda da compra). */
+  amountInAccountCurrency?: number | null;
+  /** Preenchidos pelo cliente quando `amount` foi convertido: valor e moeda originais da compra. */
+  originalAmount?: number | null;
+  originalCurrencyCode?: string | null;
   type: TransactionType;
   /** Presente em cartões Nubank/Pluggy; parcelas futuras de compra estornada costumam ficar PENDING. */
   status?: TransactionStatus | null;

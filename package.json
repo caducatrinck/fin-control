@@ -1,6 +1,6 @@
 {
   "name": "fin-control",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Controle financeiro pessoal via Open Finance (Pluggy)",
   "author": "Catrinck",
